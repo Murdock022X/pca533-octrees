@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 3.25 FATAL_ERROR)
+
+project(octrees VERSION 0.1.0 LANGUAGES CXX CUDA)
+
+find_package(CUDA REQUIRED)
+find_package(pybind11 REQUIRED CONFIG)
+find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_COLOR_MAKEFILE ON)
+set(VERBOSE_BUILD ON)
+set(CMAKE_CXX_STANDARD 20)
+set(DEFAULT_BUILD_TYPE "Release")
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
