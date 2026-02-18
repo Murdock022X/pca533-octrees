@@ -8,5 +8,6 @@ set(VERBOSE_BUILD ON)
 set(CMAKE_CXX_STANDARD 20)
 set(DEFAULT_BUILD_TYPE "Release")
 
-add_subdirectory(src)
+find_package(HDF5 REQUIRED COMPONENTS C CXX)
 
+add_subdirectory(test)
