@@ -5,10 +5,13 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "pybind11>=3.0.1",
+    "h5py>=3.15.1",
+    "ipykernel>=7.2.0",
+    "matplotlib>=3.10.8",
+    "numpy>=2.4.2",
 ]
 
 [dependency-groups]
 dev = [
-    "pybind11>=3.0.1",
+    "ipykernel>=7.2.0",
 ]

@@ -1,2 +1,1 @@
-pybind11_add_module(octrees serial.cpp)
-
+add_subdirectory(cornerstone)

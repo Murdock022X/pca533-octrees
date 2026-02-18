@@ -1,0 +1,3 @@
+[submodule "src/cornerstone"]
+	path = src/cornerstone
+	url = git@github.com:Murdock022X/cornerstone-octree.git
