@@ -1,7 +1,6 @@
-# add_subdirectory(cornerstone)
-add_library(pca STATIC 
-    pcah5.hpp
-    # h5.cpp
-)
+add_subdirectory(cornerstone)
 
-target_include_directories(pca PUBLIC ${HDF5_INCLUDE_DIRS} ../HighFive/include)
+add_executable(pca main.cpp)
+
+target_include_directories(pca PUBLIC ${HDF5_INCLUDE_DIRS} ../HighFive/include cornerstone/include)
+target_link_libraries(pca PRIVATE ${HDF5_LIBRARIES} cstone_gpu)

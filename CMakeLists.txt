@@ -10,4 +10,5 @@ set(DEFAULT_BUILD_TYPE "Release")
 
 find_package(HDF5 REQUIRED COMPONENTS C CXX)
 
+add_subdirectory(src)
 add_subdirectory(test)

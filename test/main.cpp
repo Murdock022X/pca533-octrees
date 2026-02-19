@@ -25,4 +25,3 @@ TEST_CASE("HDF5Read", "[unit]") {
 	REQUIRE(py.size() == 1000);
 	REQUIRE(pz.size() == 1000);
 }
-
