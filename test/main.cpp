@@ -16,8 +16,8 @@ TEST_CASE("HDF5Read", "[unit]") {
 	fs::path hdf5_path(path_value);
 	REQUIRE(fs::exists(hdf5_path));
 	REQUIRE(fs::is_regular_file(hdf5_path));
-
-	auto [ix, iy, iz, px, py, pz] = read_dataset<double>(hdf5_path.string(), "test");
+	HighFive::File file(hdf5_path.string(), HighFive::File::ReadOnly);
+	auto [ix, iy, iz, px, py, pz] = read_dataset<double>(file, "test");
 	REQUIRE(ix.size() == 1000);
 	REQUIRE(iy.size() == 1000);
 	REQUIRE(iz.size() == 1000);

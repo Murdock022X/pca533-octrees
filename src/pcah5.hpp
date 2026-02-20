@@ -4,9 +4,7 @@
 #include <concepts>
 
 template <std::floating_point T>
-std::tuple<std::vector<T>, std::vector<T>, std::vector<T>, std::vector<T>, std::vector<T>, std::vector<T>> read_dataset(const std::string& filename, const std::string& group_name) {
-    HighFive::File file(filename, HighFive::File::ReadOnly);
-
+std::tuple<std::vector<T>, std::vector<T>, std::vector<T>, std::vector<T>, std::vector<T>, std::vector<T>> read_dataset(const HighFive::File& file, const std::string& group_name) {
     auto grp = file.getGroup(group_name);
 
     auto ix = grp.getDataSet("ix");
