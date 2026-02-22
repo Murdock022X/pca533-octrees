@@ -58,7 +58,7 @@ void runnerGpu(std::vector<KeyType>& keys,
     // Convert to a lambda to measure the time taken by the sync function
     auto sync_f = [&]()
     {
-        domain.sync(d_keys, d_ix, d_iy, d_iz, d_h, std::tuple{}, std::tie(d_s1, d_s2, d_s3));
+        domain.sync(d_keys, d_ix, d_iy, d_iz, d_h, std::tie(d_px, d_py, d_pz), std::tie(d_s1, d_s2, d_s3));
     };
 
     float sync_ms = timeCpu(sync_f);
@@ -72,9 +72,24 @@ void runnerGpu(std::vector<KeyType>& keys,
 
     saveDomainOctreeCsvGpu(domain, group_name + "_initial", rank);
 
-    thrust::transform(thrust::device, d_ix.data() + domain.startIndex(), d_ix.data() + domain.endIndex(), d_px.data(), d_ix.data() + domain.startIndex(), thrust::plus<Real>());
-    thrust::transform(thrust::device, d_iy.data() + domain.startIndex(), d_iy.data() + domain.endIndex(), d_py.data(), d_iy.data() + domain.startIndex(), thrust::plus<Real>());
-    thrust::transform(thrust::device, d_iz.data() + domain.startIndex(), d_iz.data() + domain.endIndex(), d_pz.data(), d_iz.data() + domain.startIndex(), thrust::plus<Real>());
+    thrust::transform(thrust::device,
+                      d_ix.data() + domain.startIndex(),
+                      d_ix.data() + domain.endIndex(),
+                      d_px.data() + domain.startIndex(),
+                      d_ix.data() + domain.startIndex(),
+                      thrust::plus<Real>());
+    thrust::transform(thrust::device,
+                      d_iy.data() + domain.startIndex(),
+                      d_iy.data() + domain.endIndex(),
+                      d_py.data() + domain.startIndex(),
+                      d_iy.data() + domain.startIndex(),
+                      thrust::plus<Real>());
+    thrust::transform(thrust::device,
+                      d_iz.data() + domain.startIndex(),
+                      d_iz.data() + domain.endIndex(),
+                      d_pz.data() + domain.startIndex(),
+                      d_iz.data() + domain.startIndex(),
+                      thrust::plus<Real>());
     
     sync_ms = timeCpu(sync_f);
 
