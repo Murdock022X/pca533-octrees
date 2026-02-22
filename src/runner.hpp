@@ -3,6 +3,7 @@
 #include "pcah5.hpp"
 #include <highfive/H5File.hpp>
 #include <string>
+#include <filesystem>
 
 using Real = double;
 using KeyType = uint64_t;
@@ -23,4 +24,5 @@ void runnerGpu(std::vector<KeyType> &keys, std::vector<Real> &ix,
                std::string group_name);
 
 void runner(HighFive::File &file, std::string group_name, int rank,
-            int numRanks, bool gpu);
+            int numRanks, bool gpu, int bucketSize, int bucketSizeFocus,
+            float theta);

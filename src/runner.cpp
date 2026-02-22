@@ -9,7 +9,8 @@
 #include <vector>
 
 void runner(HighFive::File &file, std::string group_name, int rank,
-            int numRanks, bool gpu) {
+            int numRanks, bool gpu, int bucketSize, int bucketSizeFocus,
+            float theta) {
   if (!file.exist(group_name))
     throw std::runtime_error("Group does not exist in the dataset file: " +
                              group_name);
@@ -20,7 +21,7 @@ void runner(HighFive::File &file, std::string group_name, int rank,
   size_t end = (rank + 1) * ix.size() / numRanks;
 
   std::cout << "Dataset loaded [" << group_name << "] -> n = " << ix.size()
-            << "rank = " << rank << " with range [" << start << ", " << end
+            << ", rank = " << rank << ", subdomain [" << start << ", " << end
             << ")" << std::endl;
 
   std::vector<Real> ix_local(ix.begin() + start, ix.begin() + end);
@@ -31,11 +32,6 @@ void runner(HighFive::File &file, std::string group_name, int rank,
   std::vector<Real> pz_local(pz.begin() + start, pz.begin() + end);
 
   std::vector<Real> h(end - start, 0.1);
-
-  int bucketSize = 1024;
-  int bucketSizeFocus = 8;
-  float theta = 0.6f;
-
   std::vector<KeyType> keys(end - start);
   if (!gpu) {
     runnerCpu(keys, ix_local, iy_local, iz_local, h, px_local, py_local,
