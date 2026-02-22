@@ -70,7 +70,7 @@ void runnerGpu(std::vector<KeyType>& keys,
     if (rank == 0)
         std::cout << "\tDomain Sync Initial: " << sync_ms << "us, Memory Usage: " << consumed / (1024 * 1024) << "Mb" << std::endl; 
 
-    saveDomainOctreeCsvGpu(domain, group_name + "_initial", rank);
+    saveDomainOctreeH5Gpu(domain, group_name + "_initial", rank, numRanks);
 
     thrust::transform(thrust::device,
                       d_ix.data() + domain.startIndex(),
@@ -99,7 +99,7 @@ void runnerGpu(std::vector<KeyType>& keys,
     if (rank == 0)
         std::cout << "\tDomain Sync with Perturbations: " << sync_ms << "us, Memory Usage: " << consumed / (1024 * 1024) << "Mb" << std::endl;
 
-    saveDomainOctreeCsvGpu(domain, group_name + "_perturbed", rank);
+    saveDomainOctreeH5Gpu(domain, group_name + "_perturbed", rank, numRanks);
 
     sync_ms = timeCpu(sync_f);
 

@@ -68,7 +68,7 @@ void runnerCpu(std::vector<KeyType>& keys,
 
     if (rank == 0) { std::cout << "\tDomain Sync Initial: " << sync_ms << "us" << std::endl; }
 
-    saveDomainOctreeCsvCpu(domain, group_name + "_initial", rank);
+    saveDomainOctreeH5Cpu(domain, group_name + "_initial", rank, numRanks);
 
 #pragma omp parallel for
     for (auto i = domain.startIndex(); i < domain.endIndex(); ++i)
@@ -82,7 +82,7 @@ void runnerCpu(std::vector<KeyType>& keys,
 
     if (rank == 0) { std::cout << "\tDomain Sync with Perturbations: " << sync_ms << "us" << std::endl; }
 
-    saveDomainOctreeCsvCpu(domain, group_name + "_perturbed", rank);
+    saveDomainOctreeH5Cpu(domain, group_name + "_perturbed", rank, numRanks);
 
     sync_ms = timeCpu(sync_f);
 

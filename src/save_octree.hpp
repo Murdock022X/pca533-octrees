@@ -1,56 +1,135 @@
 #pragma once
 
+#include <algorithm>
+#include <cctype>
+#include <cstdint>
+#include <filesystem>
+#include <iostream>
+#include <string>
+#include <vector>
+
+#include <highfive/H5File.hpp>
+
 #include "cstone/domain/domain.hpp"
 #include "cstone/focus/source_center.hpp"
 #include "cstone/sfc/common.hpp"
-#include <string>
-#include <vector>
-#include <cstdint>
-#include <filesystem>
-#include <fstream>
-#include <algorithm>
-#include <cctype>
-#include "cstone/tree/definitions.h"
-#include "pcah5.hpp"
-#include <highfive/H5File.hpp>
-#include <chrono>
-#include "cstone/cuda/device_vector.h"
-#include "cstone/domain/domain.hpp"
+#include "cstone/tree/octree.hpp"
 
-void saveDomainOctreeCsvCpu(const cstone::Domain<KeyType, Real, cstone::CpuTag>& domain, const std::string& spec, int rank)
+struct OctreeHostData
 {
-    auto tree = domain.globalTree();
-    if (tree.numNodes == 0) { return; }
+    std::vector<KeyType> leaves;
+    std::vector<KeyType> prefixes;
+    std::vector<cstone::TreeNodeIndex> childOffset;
+    std::vector<cstone::TreeNodeIndex> internalToLeaf;
+    std::vector<cstone::TreeNodeIndex> levelRange;
+};
 
-    std::vector<KeyType> prefixes(tree.prefixes, tree.prefixes + tree.numNodes);
-    std::vector<cstone::Vec3<Real>> centers(tree.numNodes), sizes(tree.numNodes);
-    cstone::nodeFpCenters<KeyType>(prefixes, centers.data(), sizes.data(), domain.box());
+inline std::string sanitizeSpec(std::string spec)
+{
+    std::replace_if(spec.begin(), spec.end(),
+                    [](char c) { return !(std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' || c == '.'); },
+                    '_');
+    return spec;
+}
 
-    std::string safe_spec = spec;
-    std::replace_if(safe_spec.begin(), safe_spec.end(),
-                    [](char c) { return !(std::isalnum(c) || c == '-' || c == '_' || c == '.'); }, '_');
+inline void writeOctreeGroup(HighFive::File& out,
+                             const std::string& groupName,
+                             const OctreeHostData& oct,
+                             const cstone::Box<Real>& box)
+{
+    int numNodes = int(oct.prefixes.size());
+    int numLeafNodes = int(oct.leaves.size()) - 1;
+    if (numNodes <= 0 || numLeafNodes < 0) { return; }
 
-    fs::create_directories("outputs");
-    fs::path output_path = fs::path("outputs") / ("domain_octree_" + safe_spec + "_rank" + std::to_string(rank) + ".csv");
-    std::ofstream out(output_path);
-    if (!out) { throw std::runtime_error("Failed to open octree output file: " + output_path.string()); }
+    std::vector<Real> cx(numNodes), cy(numNodes), cz(numNodes);
+    std::vector<Real> sx(numNodes), sy(numNodes), sz(numNodes);
+    std::vector<unsigned> level(numNodes), isLeaf(numNodes);
+    std::vector<KeyType> startKey(numNodes);
 
-    out << "node,level,is_leaf,child_offset,prefix,start_key,cx,cy,cz,sx,sy,sz\n";
-    for (int i = 0; i < tree.numNodes; ++i)
+    std::vector<cstone::Vec3<Real>> centers(numNodes), sizes(numNodes);
+    cstone::nodeFpCenters<KeyType>(std::span<const KeyType>(oct.prefixes.data(), oct.prefixes.size()),
+                                   centers.data(), sizes.data(), box);
+
+    for (int i = 0; i < numNodes; ++i)
     {
-        KeyType prefix = tree.prefixes[i];
-        unsigned level = cstone::decodePrefixLength(prefix) / 3;
-        auto childOffset = tree.childOffsets[i];
-        bool isLeaf = (childOffset == 0);
-
-        out << i << "," << level << "," << (isLeaf ? 1 : 0) << "," << childOffset << "," << prefix << ","
-            << cstone::decodePlaceholderBit(prefix) << ","
-            << centers[i][0] << "," << centers[i][1] << "," << centers[i][2] << ","
-            << sizes[i][0] << "," << sizes[i][1] << "," << sizes[i][2] << "\n";
+        cx[i] = centers[i][0];
+        cy[i] = centers[i][1];
+        cz[i] = centers[i][2];
+        sx[i] = sizes[i][0];
+        sy[i] = sizes[i][1];
+        sz[i] = sizes[i][2];
+        level[i] = cstone::decodePrefixLength(oct.prefixes[i]) / 3;
+        isLeaf[i] = (oct.childOffset[i] == 0) ? 1u : 0u;
+        startKey[i] = cstone::decodePlaceholderBit(oct.prefixes[i]);
     }
 
-    if (rank == 0)
-    {
-        std::cout << "\tSaved domain octree CSV: " << output_path << " (" << tree.numNodes << " nodes)" << std::endl;
-    }
+    auto group = out.createGroup(groupName);
+    group.createAttribute("num_nodes", numNodes);
+    group.createAttribute("num_leaf_nodes", numLeafNodes);
+    group.createDataSet("leaves", oct.leaves);
+    group.createDataSet("prefixes", oct.prefixes);
+    group.createDataSet("child_offset", oct.childOffset);
+    group.createDataSet("internal_to_leaf", oct.internalToLeaf);
+    group.createDataSet("level_range", oct.levelRange);
+    group.createDataSet("level", level);
+    group.createDataSet("is_leaf", isLeaf);
+    group.createDataSet("start_key", startKey);
+    group.createDataSet("cx", cx);
+    group.createDataSet("cy", cy);
+    group.createDataSet("cz", cz);
+    group.createDataSet("sx", sx);
+    group.createDataSet("sy", sy);
+    group.createDataSet("sz", sz);
+}
+
+inline OctreeHostData collectOctreeFromViewCpu(const cstone::OctreeView<const KeyType>& view,
+                                               std::span<const KeyType> leaves)
+{
+    constexpr size_t levelRangeSize = cstone::maxTreeLevel<KeyType>{} + 2;
+    return {
+        std::vector<KeyType>(leaves.begin(), leaves.end()),
+        std::vector<KeyType>(view.prefixes, view.prefixes + view.numNodes),
+        std::vector<cstone::TreeNodeIndex>(view.childOffsets, view.childOffsets + view.numNodes),
+        std::vector<cstone::TreeNodeIndex>(view.internalToLeaf, view.internalToLeaf + view.numNodes),
+        std::vector<cstone::TreeNodeIndex>(view.levelRange, view.levelRange + levelRangeSize)};
+}
+
+inline OctreeHostData collectFocusOctreeCpu(const cstone::Domain<KeyType, Real, cstone::CpuTag>& domain)
+{
+    return collectOctreeFromViewCpu(domain.focusTree().octreeViewAcc(), domain.focusTree().treeLeaves());
+}
+
+inline OctreeHostData collectGlobalOctreeCpu(const cstone::Domain<KeyType, Real, cstone::CpuTag>& domain)
+{
+    auto view = domain.globalTree();
+    return collectOctreeFromViewCpu(view, std::span<const KeyType>(view.leaves, view.numLeafNodes + 1));
+}
+
+inline void saveDomainOctreeH5Cpu(const cstone::Domain<KeyType, Real, cstone::CpuTag>& domain,
+                                  const std::string& spec,
+                                  int rank,
+                                  int numRanks)
+{
+    auto globalTree = domain.globalTree();
+    if (globalTree.numLeafNodes == 0) { return; }
+
+    std::string safeSpec = sanitizeSpec(spec);
+    std::filesystem::create_directories("outputs");
+    std::filesystem::path outputPath =
+        std::filesystem::path("outputs") / ("domain_" + safeSpec + "_rank" + std::to_string(rank) + ".h5");
+
+    HighFive::File out(outputPath.string(), HighFive::File::Overwrite);
+    auto box = domain.box();
+
+    std::vector<Real> boxVec{box.xmin(), box.xmax(), box.ymin(), box.ymax(), box.zmin(), box.zmax()};
+    out.createDataSet("domain_box", boxVec);
+    out.createAttribute("rank", rank);
+    out.createAttribute("num_ranks", numRanks);
+    out.createAttribute("focus_start_cell", domain.startCell());
+    out.createAttribute("focus_end_cell", domain.endCell());
+
+    writeOctreeGroup(out, "global_octree", collectGlobalOctreeCpu(domain), box);
+    writeOctreeGroup(out, "focus_octree", collectFocusOctreeCpu(domain), box);
+
+    if (rank == 0) { std::cout << "\tSaved octree HDF5: " << outputPath << std::endl; }
 }

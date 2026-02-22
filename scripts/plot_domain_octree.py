@@ -2,6 +2,7 @@
 import argparse
 import pathlib
 
+import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.collections import PatchCollection
@@ -9,9 +10,10 @@ from matplotlib.patches import Rectangle
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Plot a domain octree CSV exported by src/runner.cu")
-    parser.add_argument("csv", type=pathlib.Path, help="Path to octree CSV file")
+    parser = argparse.ArgumentParser(description="Plot a domain octree (HDF5 or CSV) exported by src/runner.cu")
+    parser.add_argument("input", type=pathlib.Path, help="Path to octree .h5 or .csv file")
     parser.add_argument("-o", "--output", type=pathlib.Path, default=pathlib.Path("octree_plot.png"))
+    parser.add_argument("--tree", choices=["focus", "global"], default="focus", help="Octree group to plot for HDF5 input")
     parser.add_argument("--level", type=int, default=None, help="Only plot nodes at this level")
     parser.add_argument("--leaves-only", action="store_true", help="Only plot leaf nodes")
     parser.add_argument("--slice-axis", choices=["x", "y", "z"], default=None, help="Slice axis")
@@ -30,6 +32,42 @@ def load_csv(path: pathlib.Path) -> np.ndarray:
     if data.ndim == 0:
         data = data.reshape(1)
     return data
+
+
+def load_hdf5(path: pathlib.Path, tree: str) -> np.ndarray:
+    group_name = "focus_octree" if tree == "focus" else "global_octree"
+    with h5py.File(path, "r") as f:
+        if group_name not in f:
+            raise RuntimeError(f"Group '{group_name}' not found in {path}")
+        g = f[group_name]
+        n = g["level"].shape[0]
+        dtype = [
+            ("level", np.uint32),
+            ("is_leaf", np.uint32),
+            ("cx", np.float64),
+            ("cy", np.float64),
+            ("cz", np.float64),
+            ("sx", np.float64),
+            ("sy", np.float64),
+            ("sz", np.float64),
+        ]
+        data = np.empty(n, dtype=dtype)
+        data["level"] = g["level"][:]
+        data["is_leaf"] = g["is_leaf"][:]
+        data["cx"] = g["cx"][:]
+        data["cy"] = g["cy"][:]
+        data["cz"] = g["cz"][:]
+        data["sx"] = g["sx"][:]
+        data["sy"] = g["sy"][:]
+        data["sz"] = g["sz"][:]
+    return data
+
+
+def load_data(path: pathlib.Path, tree: str) -> np.ndarray:
+    suffix = path.suffix.lower()
+    if suffix in {".h5", ".hdf5"}:
+        return load_hdf5(path, tree)
+    return load_csv(path)
 
 
 def filter_rows(
@@ -102,7 +140,7 @@ def plot_projection(
 
 def main() -> None:
     args = parse_args()
-    data = load_csv(args.csv)
+    data = load_data(args.input, args.tree)
     data = filter_rows(data, args.level, args.leaves_only, args.max_nodes, args.slice_axis, args.slice_pos)
 
     if args.slice_axis == "x":
@@ -116,7 +154,7 @@ def main() -> None:
         title = f"Domain Octree slice z={args.slice_pos:g}"
     else:
         axis_u, axis_v = "x", "y"
-        title = f"Domain Octree XY Projection ({args.csv.name})"
+        title = f"Domain Octree XY Projection ({args.input.name})"
 
     plot_projection(data, args.output, title, axis_u, axis_v)
     print(f"Saved plot: {args.output}")

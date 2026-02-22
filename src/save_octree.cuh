@@ -1,70 +1,77 @@
 #pragma once
 
-#include "cstone/domain/domain.hpp"
-#include "cstone/focus/source_center.hpp"
-#include "cstone/sfc/common.hpp"
-#include <string>
-#include <vector>
-#include <cstdint>
-#include <filesystem>
-#include <fstream>
-#include <algorithm>
-#include <cctype>
-#include <thrust/transform.h>
-#include <thrust/functional.h>
-#include "cstone/tree/definitions.h"
-#include "pcah5.hpp"
-#include <highfive/H5File.hpp>
-#include <chrono>
-#include <thrust/host_vector.h>
-#include <thrust/device_ptr.h>
 #include <thrust/copy.h>
-#include "cstone/cuda/device_vector.h"
-#include "cstone/cuda/errorcheck.cuh"
-#include "cstone/domain/domain.hpp"
+#include <thrust/device_ptr.h>
+#include <thrust/host_vector.h>
 
-void saveDomainOctreeCsvGpu(const cstone::Domain<KeyType, Real, cstone::GpuTag>& domain, const std::string& spec, int rank)
+#include "save_octree.hpp"
+
+inline std::vector<KeyType> copyDeviceKeys(const KeyType* ptr, size_t n)
 {
-    auto tree = domain.globalTree();
-    if (tree.numNodes == 0) { return; }
+    thrust::host_vector<KeyType> tmp(n);
+    thrust::copy(thrust::device_ptr<const KeyType>(ptr), thrust::device_ptr<const KeyType>(ptr + n), tmp.begin());
+    return std::vector<KeyType>(tmp.begin(), tmp.end());
+}
 
-    std::vector<cstone::Vec3<Real>> centers(tree.numNodes), sizes(tree.numNodes);
-    thrust::host_vector<KeyType> prefixes(tree.numNodes);
-    thrust::copy(thrust::device_ptr<const KeyType>(tree.prefixes), // Start device iterator
-                 thrust::device_ptr<const KeyType>(tree.prefixes + tree.numNodes), // End device iterator
-                 prefixes.begin());
-    cstone::nodeFpCenters<KeyType>(std::span(prefixes.data(), prefixes.size()), centers.data(), sizes.data(), domain.box());
+inline std::vector<cstone::TreeNodeIndex> copyDeviceNodeIdx(const cstone::TreeNodeIndex* ptr, size_t n)
+{
+    thrust::host_vector<cstone::TreeNodeIndex> tmp(n);
+    thrust::copy(thrust::device_ptr<const cstone::TreeNodeIndex>(ptr),
+                 thrust::device_ptr<const cstone::TreeNodeIndex>(ptr + n), tmp.begin());
+    return std::vector<cstone::TreeNodeIndex>(tmp.begin(), tmp.end());
+}
 
-    std::string safe_spec = spec;
-    std::replace_if(safe_spec.begin(), safe_spec.end(),
-                    [](char c) { return !(std::isalnum(c) || c == '-' || c == '_' || c == '.'); }, '_');
+inline OctreeHostData collectOctreeFromViewGpu(const cstone::OctreeView<const KeyType>& view,
+                                               const KeyType* leavesPtr,
+                                               size_t leavesSize)
+{
+    constexpr size_t levelRangeSize = cstone::maxTreeLevel<KeyType>{} + 2;
+    return {
+        copyDeviceKeys(leavesPtr, leavesSize),
+        copyDeviceKeys(view.prefixes, view.numNodes),
+        copyDeviceNodeIdx(view.childOffsets, view.numNodes),
+        copyDeviceNodeIdx(view.internalToLeaf, view.numNodes),
+        copyDeviceNodeIdx(view.d_levelRange, levelRangeSize)};
+}
 
-    fs::create_directories("outputs");
-    fs::path output_path = fs::path("outputs") / ("domain_octree_" + safe_spec + "_rank" + std::to_string(rank) + ".csv");
-    std::ofstream out(output_path);
-    if (!out) { throw std::runtime_error("Failed to open octree output file: " + output_path.string()); }
+inline OctreeHostData collectGlobalOctreeGpu(const cstone::Domain<KeyType, Real, cstone::GpuTag>& domain)
+{
+    auto view = domain.globalTree();
+    return collectOctreeFromViewGpu(view, view.leaves, view.numLeafNodes + 1);
+}
 
-    thrust::host_vector<cstone::TreeNodeIndex> childOffsets(tree.numNodes);
-    thrust::copy(thrust::device_ptr<const cstone::TreeNodeIndex>(tree.childOffsets), // Start device iterator
-                 thrust::device_ptr<const cstone::TreeNodeIndex>(tree.childOffsets + tree.numNodes), // End device iterator
-                 childOffsets.begin());
+inline OctreeHostData collectFocusOctreeGpu(const cstone::Domain<KeyType, Real, cstone::GpuTag>& domain)
+{
+    auto view = domain.focusTree().octreeViewAcc();
+    auto leaves = domain.focusTree().treeLeavesAcc();
+    return collectOctreeFromViewGpu(view, leaves.data(), leaves.size());
+}
 
-    out << "node,level,is_leaf,child_offset,prefix,start_key,cx,cy,cz,sx,sy,sz\n";
-    for (int i = 0; i < tree.numNodes; ++i)
-    {
-        KeyType prefix = prefixes[i];
-        unsigned level = cstone::decodePrefixLength(prefix) / 3;
-        auto childOffset = childOffsets[i];
-        bool isLeaf = (childOffset == 0);
+inline void saveDomainOctreeH5Gpu(const cstone::Domain<KeyType, Real, cstone::GpuTag>& domain,
+                                  const std::string& spec,
+                                  int rank,
+                                  int numRanks)
+{
+    auto globalTree = domain.globalTree();
+    if (globalTree.numLeafNodes == 0) { return; }
 
-        out << i << "," << level << "," << (isLeaf ? 1 : 0) << "," << childOffset << "," << prefix << ","
-            << cstone::decodePlaceholderBit(prefix) << ","
-            << centers[i][0] << "," << centers[i][1] << "," << centers[i][2] << ","
-            << sizes[i][0] << "," << sizes[i][1] << "," << sizes[i][2] << "\n";
-    }
+    std::string safeSpec = sanitizeSpec(spec);
+    std::filesystem::create_directories("outputs");
+    std::filesystem::path outputPath =
+        std::filesystem::path("outputs") / ("domain_" + safeSpec + "_rank" + std::to_string(rank) + ".h5");
 
-    if (rank == 0)
-    {
-        std::cout << "\tSaved domain octree CSV: " << output_path << " (" << tree.numNodes << " nodes)" << std::endl;
-    }
+    HighFive::File out(outputPath.string(), HighFive::File::Overwrite);
+    auto box = domain.box();
+
+    std::vector<Real> boxVec{box.xmin(), box.xmax(), box.ymin(), box.ymax(), box.zmin(), box.zmax()};
+    out.createDataSet("domain_box", boxVec);
+    out.createAttribute("rank", rank);
+    out.createAttribute("num_ranks", numRanks);
+    out.createAttribute("focus_start_cell", domain.startCell());
+    out.createAttribute("focus_end_cell", domain.endCell());
+
+    writeOctreeGroup(out, "global_octree", collectGlobalOctreeGpu(domain), box);
+    writeOctreeGroup(out, "focus_octree", collectFocusOctreeGpu(domain), box);
+
+    if (rank == 0) { std::cout << "\tSaved octree HDF5: " << outputPath << std::endl; }
 }
