@@ -58,7 +58,13 @@ def filter_rows(
     return filtered
 
 
-def plot_projection(data: np.ndarray, output: pathlib.Path, title: str, axis_u: str, axis_v: str) -> None:
+def plot_projection(
+    data: np.ndarray,
+    output: pathlib.Path,
+    title: str,
+    axis_u: str,
+    axis_v: str,
+) -> None:
     patches = []
     colors = []
     for row in data:
@@ -101,13 +107,13 @@ def main() -> None:
 
     if args.slice_axis == "x":
         axis_u, axis_v = "y", "z"
-        title = f"Domain Octree slice x={args.slice_pos:g} ({args.csv.name})"
+        title = f"Domain Octree slice x={args.slice_pos:g}"
     elif args.slice_axis == "y":
         axis_u, axis_v = "x", "z"
-        title = f"Domain Octree slice y={args.slice_pos:g} ({args.csv.name})"
+        title = f"Domain Octree slice y={args.slice_pos:g}"
     elif args.slice_axis == "z":
         axis_u, axis_v = "x", "y"
-        title = f"Domain Octree slice z={args.slice_pos:g} ({args.csv.name})"
+        title = f"Domain Octree slice z={args.slice_pos:g}"
     else:
         axis_u, axis_v = "x", "y"
         title = f"Domain Octree XY Projection ({args.csv.name})"

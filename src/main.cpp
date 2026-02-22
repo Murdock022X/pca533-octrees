@@ -8,9 +8,6 @@
 
 namespace fs = std::filesystem;
 
-using Real    = double;
-using KeyType = unsigned;
-
 int main(int argc, char *argv[])
 {
     if (argc < 3)
