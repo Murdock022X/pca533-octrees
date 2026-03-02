@@ -113,7 +113,7 @@ inline OctreeHostData collectGlobalOctreeCpu(
 
 inline void saveDomainOctreeH5Cpu(
     const cstone::Domain<KeyType, Real, cstone::CpuTag> &domain,
-    const std::string &spec, int rank, int numRanks) {
+    const std::string &spec, int rank, int numRanks, std::vector<Real> &x, std::vector<Real> &y, std::vector<Real> &z, std::vector<KeyType> &keys) {
   auto globalTree = domain.globalTree();
   if (globalTree.numLeafNodes == 0) {
     return;
@@ -138,6 +138,10 @@ inline void saveDomainOctreeH5Cpu(
 
   writeOctreeGroup(out, "global_octree", collectGlobalOctreeCpu(domain), box);
   writeOctreeGroup(out, "focus_octree", collectFocusOctreeCpu(domain), box);
+  out.createDataSet("x", x);
+  out.createDataSet("y", y);
+  out.createDataSet("z", z);
+  out.createDataSet("keys", keys);
 
   if (rank == 0) {
     std::cout << "\tSaved octree HDF5: " << outputPath << std::endl;
