@@ -20,6 +20,7 @@ int main(int argc, char *argv[]) {
   };
 
   bool gpu = false;
+  bool lets = false;
   double theta = 0.6;
   int bucketSizeGlobal = 1024;
   int bucketSizeFocus = 64;
@@ -33,6 +34,8 @@ int main(int argc, char *argv[]) {
     }
     if (arg == "--gpu") {
       gpu = true;
+    } else if (arg == "--lets") {
+      lets = true;
     } else if (arg == "--theta") {
       if (i + 1 >= argc) {
         std::cerr << "Missing value for --theta" << std::endl;
@@ -104,7 +107,7 @@ int main(int argc, char *argv[]) {
 
   for (int i = positionalStart + 1; i < argc; ++i) {
     std::string group_name(argv[i]);
-    runner(file, group_name, rank, numRanks, gpu, bucketSizeGlobal,
+    runner(file, group_name, rank, numRanks, gpu, lets, bucketSizeGlobal,
            bucketSizeFocus, static_cast<float>(theta));
   }
 

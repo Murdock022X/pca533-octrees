@@ -23,6 +23,20 @@ void runnerGpu(std::vector<KeyType> &keys, std::vector<Real> &ix,
                int numRanks, int bucketSize, int bucketSizeFocus, float theta,
                std::string group_name);
 
+void runnerCpuMulti(std::vector<KeyType> &keys, std::vector<Real> &ix,
+               std::vector<Real> &iy, std::vector<Real> &iz,
+               std::vector<Real> &h, std::vector<Real> &px,
+               std::vector<Real> &py, std::vector<Real> &pz, int rank,
+               int numRanks, int bucketSize, int bucketSizeFocus, float theta,
+               std::string group_name);
+
+void runnerGpuMulti(std::vector<KeyType> &keys, std::vector<Real> &ix,
+               std::vector<Real> &iy, std::vector<Real> &iz,
+               std::vector<Real> &h, std::vector<Real> &px,
+               std::vector<Real> &py, std::vector<Real> &pz, int rank,
+               int numRanks, int bucketSize, int bucketSizeFocus, float theta,
+               std::string group_name);
+
 void runner(HighFive::File &file, std::string group_name, int rank,
-            int numRanks, bool gpu, int bucketSize, int bucketSizeFocus,
+            int numRanks, bool gpu, bool lets, int bucketSize, int bucketSizeFocus,
             float theta);

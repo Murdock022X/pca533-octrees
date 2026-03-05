@@ -37,11 +37,65 @@
 #include "cstone/sfc/sfc.hpp"
 #include "cstone/tree/definitions.h"
 #include "cstone/primitives/gather.hpp"
+#include <thrust/execution_policy.h>
+#include <thrust/device_vector.h>
+#include <thrust/gather.h>
+
+#include "cstone/cuda/cuda_utils.cuh"
+#include "cstone/cuda/thrust_util.cuh"
+#include "cstone/primitives/primitives_gpu.h"
+#include "cstone/sfc/sfc_gpu.h"
+#include "cstone/tree/octree_gpu.h"
+#include "cstone/tree/update_gpu.cuh"
+
 
 #include "pcah5.hpp"
 #include "runner.hpp"
 #include "save_octree.cuh"
 #include "utils.hpp"
+
+void processGpu(cstone::Box<Real> &box, 
+  cstone::DeviceVector<KeyType> &d_keys, 
+  cstone::DeviceVector<KeyType> &d_keys_tmp, 
+  cstone::DeviceVector<int> &d_ordering, cstone::DeviceVector<int> &d_values_tmp, 
+  cstone::DeviceVector<Real> &tmp, 
+  cstone::DeviceVector<char> &cubTmpStorage, uint64_t tempStorageEle,
+  cstone::DeviceVector<unsigned> &d_counts, 
+  cstone::DeviceVector<cstone::TreeNodeIndex> &workArray,
+  cstone::DeviceVector<cstone::LocalIndex> &d_layout,
+  cstone::DeviceVector<KeyType> &d_tree, cstone::DeviceVector<KeyType> &tmpTree, 
+  cstone::OctreeData<KeyType, cstone::GpuTag> &octreeGpuData, 
+  cstone::DeviceVector<Real> &d_x, cstone::DeviceVector<Real> &d_y, cstone::DeviceVector<Real> &d_z, 
+  int bucketSize, size_t np) {
+
+  cstone::computeSfcKeysGpu(rawPtr(d_x), rawPtr(d_y), rawPtr(d_z), cstone::sfcKindPointer(rawPtr(d_keys)), np, box);
+  cstone::sequenceGpu(rawPtr(d_ordering), np, 0);
+  cstone::sortByKeyGpu(rawPtr(d_keys), rawPtr(d_keys) + np, rawPtr(d_ordering), rawPtr(d_keys_tmp), rawPtr(d_values_tmp), rawPtr(cubTmpStorage), tempStorageEle);
+
+  thrust::gather(thrust::device, rawPtr(d_ordering), rawPtr(d_ordering) + np, rawPtr(d_x), tmp.data());
+  thrust::copy(thrust::device, rawPtr(tmp), rawPtr(tmp) + np, rawPtr(d_x));
+  thrust::gather(thrust::device, rawPtr(d_ordering), rawPtr(d_ordering) + np, rawPtr(d_y), tmp.data());
+  thrust::copy(thrust::device, rawPtr(tmp), rawPtr(tmp) + np, rawPtr(d_y));
+  thrust::gather(thrust::device, rawPtr(d_ordering), rawPtr(d_ordering) + np, rawPtr(d_z), tmp.data());
+  thrust::copy(thrust::device, rawPtr(tmp), rawPtr(tmp) + np, rawPtr(d_z));
+
+  if (d_tree.size() == 0)
+  {
+      // initial guess on first call. use previous tree as guess on subsequent calls
+      d_tree = std::vector<KeyType>{0, cstone::nodeRange<KeyType>(0)};
+      d_counts = std::vector<unsigned>{unsigned(np)};
+  }
+
+  while (!cstone::updateOctreeGpu<KeyType>({rawPtr(d_keys), d_keys.size()}, bucketSize, d_tree, d_counts,
+                                                 tmpTree, workArray));
+
+  octreeGpuData.resize(cstone::nNodes(d_tree));
+  cstone::buildOctreeGpu(rawPtr(d_tree), octreeGpuData.data());
+
+  d_layout.resize(d_counts.size() + 1);
+  cstone::fillGpu(rawPtr(d_layout), rawPtr(d_layout) + 1, cstone::LocalIndex(0));
+  cstone::inclusiveScanGpu(rawPtr(d_counts), rawPtr(d_counts) + d_counts.size(), rawPtr(d_layout) + 1);
+}
 
 void runnerGpu(std::vector<KeyType> &keys, std::vector<Real> &ix,
                std::vector<Real> &iy, std::vector<Real> &iz,
@@ -49,63 +103,39 @@ void runnerGpu(std::vector<KeyType> &keys, std::vector<Real> &ix,
                std::vector<Real> &py, std::vector<Real> &pz, int rank,
                int numRanks, int bucketSize, int bucketSizeFocus, float theta,
                std::string group_name) {
-  size_t free_initial_byte, free_byte;
-  size_t total_initial_byte, total_byte;
-
   cstone::Box<Real> box{-1.5, 1.5};
 
-  unsigned int np = keys.size();
+  size_t np = keys.size();
+  int call_count = 1;
 
   std::cout << "Running GPU Octree Build and Sync Benchmark with " << np
             << " particles, bucket size: " << bucketSize
             << ", theta: " << theta << std::endl;
-
-  // Get memory info
-  checkGpuErrors(cudaMemGetInfo(&free_initial_byte, &total_initial_byte));
-
-  size_t used_initial_byte = total_initial_byte - free_initial_byte;
   
-  std::vector<cstone::LocalIndex> sfcOrder(np);
-  std::iota(begin(sfcOrder), end(sfcOrder), cstone::LocalIndex(0));
-
-  cstone::computeSfcKeys(ix.data(), iy.data(), iz.data(), cstone::sfcKindPointer(keys.data()), np, box);
-  cstone::sort_by_key(keys.data(), keys.data() + np, sfcOrder.data());
-
-  std::vector<Real> temp(ix.size());
-  cstone::gather<cstone::LocalIndex>(sfcOrder, ix.data(), temp.data());
-  std::swap(ix, temp);
-  cstone::gather<cstone::LocalIndex>(sfcOrder, iy.data(), temp.data());
-  std::swap(iy, temp);
-  cstone::gather<cstone::LocalIndex>(sfcOrder, iz.data(), temp.data());
-  std::swap(iz, temp);
-
-  cstone::DeviceVector<KeyType> d_keys(keys.data(), keys.data() + np);
-
-  cstone::DeviceVector<KeyType> tree    = std::vector<KeyType>{0, cstone::nodeRange<KeyType>(0)};
-  cstone::DeviceVector<unsigned> counts = std::vector<unsigned>{np};
-
-  cstone::DeviceVector<KeyType> tmpTree;
+  cstone::DeviceVector<KeyType> d_keys(keys.size());
+  cstone::DeviceVector<KeyType> d_tree, tmpTree;
+  cstone::OctreeData<KeyType, cstone::GpuTag> octreeGpuData;
+  cstone::DeviceVector<KeyType> d_keys_tmp(keys.size());
+  cstone::DeviceVector<unsigned> d_counts;
   cstone::DeviceVector<cstone::TreeNodeIndex> workArray;
 
-  std::vector<Real> x(keys.size()), y(keys.size()), z(keys.size());
+  cstone::DeviceVector<int> d_ordering(keys.size()), d_values_tmp(keys.size());
+  cstone::DeviceVector<Real> tmp(keys.size());
+  cstone::DeviceVector<Real> d_ix(ix), d_iy(iy), d_iz(iz);
+  cstone::DeviceVector<cstone::LocalIndex> d_layout;
 
-  int call_count = 0;
+  uint64_t tempStorageEle = cstone::sortByKeyTempStorage<KeyType, cstone::LocalIndex>(np);
+  cstone::DeviceVector<char> cubTmpStorage(tempStorageEle);
 
-  // Convert to a lambda to measure the time taken by the sync function
-  auto fullBuild = [&]()
-  {
-    while (!cstone::updateOctreeGpu<KeyType>({rawPtr(d_keys), np}, bucketSize, tree, counts, tmpTree,
-                                      workArray)) { call_count++; };
+  auto f = [&]() {
+    processGpu(box, d_keys, d_keys_tmp, d_ordering, d_values_tmp, tmp, cubTmpStorage, tempStorageEle, 
+      d_counts, workArray, d_layout, d_tree, tmpTree, octreeGpuData, d_ix, d_iy, d_iz, bucketSize, np);
   };
 
-  float sync_ms = timeGpu(fullBuild);
-
-  checkGpuErrors(cudaMemGetInfo(&free_byte, &total_byte));
-  size_t consumed = total_byte - free_byte - used_initial_byte;
+  float sync_ms = timeGpu(f);
 
   if (rank == 0)
-    std::cout << "\tUpdate Octree Initial: " << sync_ms
-              << "us, Memory Usage: " << consumed / (1024 * 1024) << "Mb"
+    std::cout << "\tUpdate Octree Initial: " << sync_ms << "us, call count: " << call_count
               << std::endl;
 
   // thrust::copy(thrust::host, d_keys.data(), d_keys.data() + d_keys.size(), keys.begin());
@@ -119,44 +149,21 @@ void runnerGpu(std::vector<KeyType> &keys, std::vector<Real> &ix,
     iz[i] += pz[i];
   }
 
-  std::iota(begin(sfcOrder), end(sfcOrder), cstone::LocalIndex(0));
+  d_ix = ix;
+  d_iy = iy;
+  d_iz = iz;
 
-  cstone::computeSfcKeys(ix.data(), iy.data(), iz.data(), cstone::sfcKindPointer(keys.data()), np, box);
-  cstone::sort_by_key(keys.data(), keys.data() + np, sfcOrder.data());
+  sync_ms = timeGpu(f);
 
-  cstone::gather<cstone::LocalIndex>(sfcOrder, ix.data(), temp.data());
-  std::swap(ix, temp);
-  cstone::gather<cstone::LocalIndex>(sfcOrder, iy.data(), temp.data());
-  std::swap(iy, temp);
-  cstone::gather<cstone::LocalIndex>(sfcOrder, iz.data(), temp.data());
-  std::swap(iz, temp);
-  d_keys = keys;
-
-  call_count = 0;
-
-  sync_ms = timeGpu(fullBuild);
-
-  checkGpuErrors(cudaMemGetInfo(&free_byte, &total_byte));
-  consumed = total_byte - free_byte - used_initial_byte;
+  call_count = 1;
 
   if (rank == 0)
-    std::cout << "\tDomain Sync with Perturbations: " << sync_ms
-              << "us, Memory Usage: " << consumed / (1024 * 1024) << "Mb"
+    std::cout << "\tPerturbation update time: " << sync_ms << " us, call count: " << call_count
               << std::endl;
   
   // thrust::copy(thrust::host, d_keys.data(), d_keys.data() + d_keys.size(), keys.begin());
 
   // saveOctreeH5Gpu(domain, group_name + "_perturbed", x, y, z, keys);
-
-  sync_ms = timeGpu(fullBuild);
-
-  checkGpuErrors(cudaMemGetInfo(&free_byte, &total_byte));
-  consumed = total_byte - free_byte - used_initial_byte;
-
-  if (rank == 0)
-    std::cout << "\tDomain Sync without Perturbations: " << sync_ms
-              << "us, Memory Usage: " << consumed / (1024 * 1024) << "Mb\n"
-              << std::endl;
 }
 
 void runnerGpuMulti(std::vector<KeyType> &keys, std::vector<Real> &ix,
@@ -200,10 +207,10 @@ void runnerGpuMulti(std::vector<KeyType> &keys, std::vector<Real> &ix,
               << "us, Memory Usage: " << consumed / (1024 * 1024) << "Mb"
               << std::endl;
 
-  thrust::copy(thrust::host, d_ix.data(), d_ix.data() + d_ix.size(), x.begin());
-  thrust::copy(thrust::host, d_iy.data(), d_iy.data() + d_iy.size(), y.begin());
-  thrust::copy(thrust::host, d_iz.data(), d_iz.data() + d_iz.size(), z.begin());
-  thrust::copy(thrust::host, d_keys.data(), d_keys.data() + d_keys.size(), keys.begin());
+  cudaMemcpy(x.data(), d_ix.data(), d_ix.size() * sizeof(Real), cudaMemcpyDeviceToHost);
+  cudaMemcpy(y.data(), d_iy.data(), d_iy.size() * sizeof(Real), cudaMemcpyDeviceToHost);
+  cudaMemcpy(z.data(), d_iz.data(), d_iz.size() * sizeof(Real), cudaMemcpyDeviceToHost);
+  cudaMemcpy(keys.data(), d_keys.data(), d_keys.size() * sizeof(KeyType), cudaMemcpyDeviceToHost);
 
   saveDomainOctreeH5Gpu(domain, group_name + "_initial", rank, numRanks, x, y, z, keys);
 
@@ -230,10 +237,10 @@ void runnerGpuMulti(std::vector<KeyType> &keys, std::vector<Real> &ix,
               << "us, Memory Usage: " << consumed / (1024 * 1024) << "Mb"
               << std::endl;
 
-  thrust::copy(thrust::host, d_ix.data(), d_ix.data() + d_ix.size(), x.begin());
-  thrust::copy(thrust::host, d_iy.data(), d_iy.data() + d_iy.size(), y.begin());
-  thrust::copy(thrust::host, d_iz.data(), d_iz.data() + d_iz.size(), z.begin());
-  thrust::copy(thrust::host, d_keys.data(), d_keys.data() + d_keys.size(), keys.begin());
+  cudaMemcpy(x.data(), d_ix.data(), d_ix.size() * sizeof(Real), cudaMemcpyDeviceToHost);
+  cudaMemcpy(y.data(), d_iy.data(), d_iy.size() * sizeof(Real), cudaMemcpyDeviceToHost);
+  cudaMemcpy(z.data(), d_iz.data(), d_iz.size() * sizeof(Real), cudaMemcpyDeviceToHost);
+  cudaMemcpy(keys.data(), d_keys.data(), d_keys.size() * sizeof(KeyType), cudaMemcpyDeviceToHost);
 
   saveDomainOctreeH5Gpu(domain, group_name + "_perturbed", rank, numRanks, x, y, z, keys);
 
