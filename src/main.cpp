@@ -22,7 +22,7 @@ int main(int argc, char *argv[]) {
   bool gpu = false;
   bool lets = false;
   double theta = 0.6;
-  int bucketSizeGlobal = 1024;
+  int bucketSize = 1024;
   int bucketSizeFocus = 64;
 
   int positionalStart = 1;
@@ -48,16 +48,16 @@ int main(int argc, char *argv[]) {
         std::cerr << "Invalid value for --theta: " << argv[i] << std::endl;
         return 1;
       }
-    } else if (arg == "--bucket-size-global") {
+    } else if (arg == "--bucket-size") {
       if (i + 1 >= argc) {
         std::cerr << "Missing value for --bucket-size-global" << std::endl;
         printUsage();
         return 1;
       }
       try {
-        bucketSizeGlobal = std::stoi(argv[++i]);
+        bucketSize = std::stoi(argv[++i]);
       } catch (const std::exception &) {
-        std::cerr << "Invalid value for --bucket-size-global: " << argv[i]
+        std::cerr << "Invalid value for --bucket-size: " << argv[i]
                   << std::endl;
         return 1;
       }
@@ -107,7 +107,7 @@ int main(int argc, char *argv[]) {
 
   for (int i = positionalStart + 1; i < argc; ++i) {
     std::string group_name(argv[i]);
-    runner(file, group_name, rank, numRanks, gpu, lets, bucketSizeGlobal,
+    runner(file, group_name, rank, numRanks, gpu, lets, bucketSize,
            bucketSizeFocus, static_cast<float>(theta));
   }
 
