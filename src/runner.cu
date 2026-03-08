@@ -40,7 +40,7 @@
 #include <thrust/execution_policy.h>
 #include <thrust/device_vector.h>
 #include <thrust/gather.h>
-
+#include <nvtx3/nvToolsExt.h>
 #include "cstone/cuda/cuda_utils.cuh"
 #include "cstone/cuda/thrust_util.cuh"
 #include "cstone/primitives/primitives_gpu.h"
@@ -131,8 +131,10 @@ void runnerGpu(std::vector<KeyType> &keys, std::vector<Real> &ix,
     processGpu(box, d_keys, d_keys_tmp, d_ordering, d_values_tmp, tmp, cubTmpStorage, tempStorageEle, 
       d_counts, workArray, d_layout, d_tree, tmpTree, octreeGpuData, d_ix, d_iy, d_iz, bucketSize, np);
   };
-
+  
+  nvtxRangePushA("Initial");
   float sync_ms = timeGpu(f);
+  nvtxRangePop();
 
   if (rank == 0)
     std::cout << "\tUpdate Octree Initial: " << sync_ms << "us, call count: " << call_count
@@ -153,7 +155,9 @@ void runnerGpu(std::vector<KeyType> &keys, std::vector<Real> &ix,
   d_iy = iy;
   d_iz = iz;
 
+  nvtxRangePushA("Perturb");
   sync_ms = timeGpu(f);
+  nvtxRangePop();
 
   call_count = 1;
 
@@ -207,6 +211,10 @@ void runnerGpuMulti(std::vector<KeyType> &keys, std::vector<Real> &ix,
               << "us, Memory Usage: " << consumed / (1024 * 1024) << "Mb"
               << std::endl;
 
+  x.resize(d_ix.size());
+  y.resize(d_iy.size());
+  z.resize(d_iz.size());
+  keys.resize(d_keys.size());
   cudaMemcpy(x.data(), d_ix.data(), d_ix.size() * sizeof(Real), cudaMemcpyDeviceToHost);
   cudaMemcpy(y.data(), d_iy.data(), d_iy.size() * sizeof(Real), cudaMemcpyDeviceToHost);
   cudaMemcpy(z.data(), d_iz.data(), d_iz.size() * sizeof(Real), cudaMemcpyDeviceToHost);
@@ -237,6 +245,10 @@ void runnerGpuMulti(std::vector<KeyType> &keys, std::vector<Real> &ix,
               << "us, Memory Usage: " << consumed / (1024 * 1024) << "Mb"
               << std::endl;
 
+  x.resize(d_ix.size());
+  y.resize(d_iy.size());
+  z.resize(d_iz.size());
+  keys.resize(d_keys.size());
   cudaMemcpy(x.data(), d_ix.data(), d_ix.size() * sizeof(Real), cudaMemcpyDeviceToHost);
   cudaMemcpy(y.data(), d_iy.data(), d_iy.size() * sizeof(Real), cudaMemcpyDeviceToHost);
   cudaMemcpy(z.data(), d_iz.data(), d_iz.size() * sizeof(Real), cudaMemcpyDeviceToHost);

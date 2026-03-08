@@ -35,6 +35,8 @@ void runner(HighFive::File &file, std::string group_name, int rank,
 
   std::vector<Real> h(end - start, 0.1);
   std::vector<KeyType> keys(end - start);
+
+  for (int i = 0; i < 10; i++) {
   if (!gpu && !lets) {
     runnerCpu(keys, ix_local, iy_local, iz_local, h, px_local, py_local,
               pz_local, rank, numRanks, bucketSize, bucketSizeFocus, theta,
@@ -53,6 +55,7 @@ void runner(HighFive::File &file, std::string group_name, int rank,
               group_name);
   } else {
     throw std::runtime_error("Invalid combination of gpu and lets flags");
+  }
   }
 }
 

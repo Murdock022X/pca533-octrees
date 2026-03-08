@@ -2,7 +2,7 @@
 .PHONY: build clean format tidy
 
 build:
-	cmake -S . -B ./build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CSTONE_WITH_GPU_AWARE_MPI=OFF -DCMAKE_C_COMPILER=mpicc -DCMAKE_CXX_COMPILER=mpicxx -DCMAKE_CUDA_HOST_COMPILER=mpicxx -DGPU_DIRECT=OFF
+	cmake -S . -B ./build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=mpicc -DCMAKE_CXX_COMPILER=mpicxx -DCSTONE_WITH_GPU_AWARE_MPI=ON
 
 clean:
 	rm -rf ./build	

@@ -94,6 +94,14 @@ int main(int argc, char *argv[]) {
   int rank = 0, numRanks = 0;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
+  
+  int dev_count = 0;
+  cudaError_t err = cudaGetDeviceCount(&dev_count);
+
+  std::cout << dev_count << " GPUs" << std::endl;
+
+  cudaSetDevice(rank);
+  std::cout << "Rank " << rank << " setting device" << std::endl;
 
   fs::path dataset_path(argv[positionalStart]);
   if (!fs::exists(dataset_path))
