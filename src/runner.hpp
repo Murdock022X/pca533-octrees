@@ -9,34 +9,34 @@ using Real = double;
 using KeyType = uint64_t;
 namespace fs = std::filesystem;
 
-void runnerCpu(std::vector<KeyType> &keys, std::vector<Real> &ix,
-               std::vector<Real> &iy, std::vector<Real> &iz,
-               std::vector<Real> &h, std::vector<Real> &px,
-               std::vector<Real> &py, std::vector<Real> &pz, int rank,
+void runnerCpu(const std::vector<KeyType> &keys, const std::vector<Real> &ix,
+               const std::vector<Real> &iy, const std::vector<Real> &iz,
+               const std::vector<Real> &h, const std::vector<Real> &px,
+               const std::vector<Real> &py, const std::vector<Real> &pz, int rank,
                int numRanks, int bucketSize, int bucketSizeFocus, float theta,
-               std::string group_name);
+               std::string group_name, bool save);
 
-void runnerGpu(std::vector<KeyType> &keys, std::vector<Real> &ix,
-               std::vector<Real> &iy, std::vector<Real> &iz,
-               std::vector<Real> &h, std::vector<Real> &px,
-               std::vector<Real> &py, std::vector<Real> &pz, int rank,
+void runnerGpu(const std::vector<KeyType> &keys, const std::vector<Real> &ix,
+               const std::vector<Real> &iy, const std::vector<Real> &iz,
+               const std::vector<Real> &h, const std::vector<Real> &px,
+               const std::vector<Real> &py, const std::vector<Real> &pz, int rank,
                int numRanks, int bucketSize, int bucketSizeFocus, float theta,
-               std::string group_name);
+               std::string group_name, bool save);
 
-void runnerCpuMulti(std::vector<KeyType> &keys, std::vector<Real> &ix,
-               std::vector<Real> &iy, std::vector<Real> &iz,
-               std::vector<Real> &h, std::vector<Real> &px,
-               std::vector<Real> &py, std::vector<Real> &pz, int rank,
+void runnerCpuMulti(const std::vector<KeyType> &keys, const std::vector<Real> &ix,
+               const std::vector<Real> &iy, const std::vector<Real> &iz,
+               const std::vector<Real> &h, const std::vector<Real> &px,
+               const std::vector<Real> &py, const std::vector<Real> &pz, int rank,
                int numRanks, int bucketSize, int bucketSizeFocus, float theta,
-               std::string group_name);
+               std::string group_name, bool save);
 
-void runnerGpuMulti(std::vector<KeyType> &keys, std::vector<Real> &ix,
-               std::vector<Real> &iy, std::vector<Real> &iz,
-               std::vector<Real> &h, std::vector<Real> &px,
-               std::vector<Real> &py, std::vector<Real> &pz, int rank,
+void runnerGpuMulti(const std::vector<KeyType> &keys, const std::vector<Real> &ix,
+               const std::vector<Real> &iy, const std::vector<Real> &iz,
+               const std::vector<Real> &h, const std::vector<Real> &px,
+               const std::vector<Real> &py, const std::vector<Real> &pz, int rank,
                int numRanks, int bucketSize, int bucketSizeFocus, float theta,
-               std::string group_name);
+               std::string group_name, bool save);
 
 void runner(HighFive::File &file, std::string group_name, int rank,
             int numRanks, bool gpu, bool lets, int bucketSize, int bucketSizeFocus,
-            float theta);
+            float theta, bool save);

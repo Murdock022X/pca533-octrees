@@ -12,7 +12,7 @@
 
 void runner(HighFive::File &file, std::string group_name, int rank,
             int numRanks, bool gpu, bool lets, int bucketSize, int bucketSizeFocus,
-            float theta) {
+            float theta, bool save) {
   if (!file.exist(group_name))
     throw std::runtime_error("Group does not exist in the dataset file: " +
                              group_name);
@@ -40,19 +40,19 @@ void runner(HighFive::File &file, std::string group_name, int rank,
   if (!gpu && !lets) {
     runnerCpu(keys, ix_local, iy_local, iz_local, h, px_local, py_local,
               pz_local, rank, numRanks, bucketSize, bucketSizeFocus, theta,
-              group_name);
+              group_name, save);
   } else if (!gpu && lets) {
     runnerCpuMulti(keys, ix_local, iy_local, iz_local, h, px_local, py_local,
               pz_local, rank, numRanks, bucketSize, bucketSizeFocus, theta,
-              group_name);
+              group_name, save);
   } else if (gpu && !lets) {
     runnerGpu(keys, ix_local, iy_local, iz_local, h, px_local, py_local,
               pz_local, rank, numRanks, bucketSize, bucketSizeFocus, theta,
-              group_name);
+              group_name, save);
   } else if (gpu && lets) {
     runnerGpuMulti(keys, ix_local, iy_local, iz_local, h, px_local, py_local,
               pz_local, rank, numRanks, bucketSize, bucketSizeFocus, theta,
-              group_name);
+              group_name, save);
   } else {
     throw std::runtime_error("Invalid combination of gpu and lets flags");
   }
@@ -101,12 +101,12 @@ void processCpu(cstone::Box<Real> &box,
   std::inclusive_scan(d_counts.begin(), d_counts.end(), d_layout.begin() + 1);
 }
 
-void runnerCpu(std::vector<KeyType> &keys, std::vector<Real> &ix,
-               std::vector<Real> &iy, std::vector<Real> &iz,
-               std::vector<Real> &h, std::vector<Real> &px,
-               std::vector<Real> &py, std::vector<Real> &pz, int rank,
+void runnerCpu(const std::vector<KeyType> &keys, const std::vector<Real> &ix,
+               const std::vector<Real> &iy, const std::vector<Real> &iz,
+               const std::vector<Real> &h, const std::vector<Real> &px,
+               const std::vector<Real> &py, const std::vector<Real> &pz, int rank,
                int numRanks, int bucketSize, int bucketSizeFocus, float theta,
-               std::string group_name) {
+               std::string group_name, bool save) {
   cstone::Box<Real> box{-1.5, 1.5};
 
   size_t np = keys.size();
@@ -130,9 +130,11 @@ void runnerCpu(std::vector<KeyType> &keys, std::vector<Real> &ix,
   uint64_t tempStorageEle = cstone::sortByKeyTempStorage<KeyType, cstone::LocalIndex>(np);
   std::vector<char> cubTmpStorage(tempStorageEle);
 
+  std::vector<Real> x(ix), y(iy), z(iz);
+
   auto f = [&]() {
     processCpu(box, d_keys, d_keys_tmp, d_ordering, d_values_tmp, tmp, cubTmpStorage, tempStorageEle, 
-      d_counts, workArray, d_layout, d_tree, tmpTree, octreeData, ix, iy, iz, bucketSize, np);
+      d_counts, workArray, d_layout, d_tree, tmpTree, octreeData, x, y, z, bucketSize, np);
   };
 
   float sync_ms = timeCpu(f);
@@ -147,9 +149,9 @@ void runnerCpu(std::vector<KeyType> &keys, std::vector<Real> &ix,
 
   #pragma omp parallel for
   for (auto i = 0; i < ix.size(); ++i) {
-    ix[i] += px[i];
-    iy[i] += py[i];
-    iz[i] += pz[i];
+    x[i] += px[i];
+    y[i] += py[i];
+    z[i] += pz[i];
   }
 
   sync_ms = timeCpu(f);
@@ -165,18 +167,21 @@ void runnerCpu(std::vector<KeyType> &keys, std::vector<Real> &ix,
   // saveOctreeH5Gpu(domain, group_name + "_perturbed", x, y, z, keys);
 }
 
-void runnerCpuMulti(std::vector<KeyType> &keys, std::vector<Real> &ix,
-               std::vector<Real> &iy, std::vector<Real> &iz,
-               std::vector<Real> &h, std::vector<Real> &px,
-               std::vector<Real> &py, std::vector<Real> &pz, int rank,
+void runnerCpuMulti(const std::vector<KeyType> &keys, const std::vector<Real> &ix,
+               const std::vector<Real> &iy, const std::vector<Real> &iz,
+               const std::vector<Real> &h, const std::vector<Real> &px,
+               const std::vector<Real> &py, const std::vector<Real> &pz, int rank,
                int numRanks, int bucketSize, int bucketSizeFocus, float theta,
-               std::string group_name) {
+               std::string group_name, bool save) {
   cstone::Domain<KeyType, Real, cstone::CpuTag> domain(
       rank, numRanks, bucketSize, bucketSizeFocus, theta);
 
+  std::vector<KeyType> k(keys);
+  std::vector<Real> x(ix), y(iy), z(iz);
+  std::vector<Real> hh(h);
   std::vector<Real> s1, s2, s3;
   auto sync_f = [&]() {
-    domain.sync(keys, ix, iy, iz, h, std::tie(px, py, pz),
+    domain.sync(k, x, y, z, hh, std::tuple{},
                 std::tie(s1, s2, s3));
   };
 
@@ -186,13 +191,14 @@ void runnerCpuMulti(std::vector<KeyType> &keys, std::vector<Real> &ix,
     std::cout << "\tDomain Sync Initial: " << sync_ms << "us" << std::endl;
   }
 
-  saveDomainOctreeH5Cpu(domain, group_name + "_initial", rank, numRanks, ix, iy, iz, keys);
+  if (save)
+    saveDomainOctreeH5Cpu(domain, group_name + "_initial", rank, numRanks, x, y, z, k);
 
 #pragma omp parallel for
   for (auto i = domain.startIndex(); i < domain.endIndex(); ++i) {
-    ix[i] += px[i];
-    iy[i] += py[i];
-    iz[i] += pz[i];
+    x[i] += px[i];
+    y[i] += py[i];
+    z[i] += pz[i];
   }
 
   sync_ms = timeCpu(sync_f);
@@ -202,7 +208,8 @@ void runnerCpuMulti(std::vector<KeyType> &keys, std::vector<Real> &ix,
               << std::endl;
   }
 
-  saveDomainOctreeH5Cpu(domain, group_name + "_perturbed", rank, numRanks, ix, iy, iz, keys);
+  if (save)
+    saveDomainOctreeH5Cpu(domain, group_name + "_perturbed", rank, numRanks, x, y, z, k);
 
   sync_ms = timeCpu(sync_f);
 

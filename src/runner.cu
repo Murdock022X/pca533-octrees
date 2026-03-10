@@ -68,16 +68,23 @@ void processGpu(cstone::Box<Real> &box,
   cstone::DeviceVector<Real> &d_x, cstone::DeviceVector<Real> &d_y, cstone::DeviceVector<Real> &d_z, 
   int bucketSize, size_t np) {
 
+  nvtxRangePushA("ComputeKeys");
   cstone::computeSfcKeysGpu(rawPtr(d_x), rawPtr(d_y), rawPtr(d_z), cstone::sfcKindPointer(rawPtr(d_keys)), np, box);
+  nvtxRangePop();
+
+  nvtxRangePushA("SortKeys");
   cstone::sequenceGpu(rawPtr(d_ordering), np, 0);
   cstone::sortByKeyGpu(rawPtr(d_keys), rawPtr(d_keys) + np, rawPtr(d_ordering), rawPtr(d_keys_tmp), rawPtr(d_values_tmp), rawPtr(cubTmpStorage), tempStorageEle);
+  nvtxRangePop();
 
+  nvtxRangePushA("ReorderXYZK");
   thrust::gather(thrust::device, rawPtr(d_ordering), rawPtr(d_ordering) + np, rawPtr(d_x), tmp.data());
   thrust::copy(thrust::device, rawPtr(tmp), rawPtr(tmp) + np, rawPtr(d_x));
   thrust::gather(thrust::device, rawPtr(d_ordering), rawPtr(d_ordering) + np, rawPtr(d_y), tmp.data());
   thrust::copy(thrust::device, rawPtr(tmp), rawPtr(tmp) + np, rawPtr(d_y));
   thrust::gather(thrust::device, rawPtr(d_ordering), rawPtr(d_ordering) + np, rawPtr(d_z), tmp.data());
   thrust::copy(thrust::device, rawPtr(tmp), rawPtr(tmp) + np, rawPtr(d_z));
+  nvtxRangePop();
 
   if (d_tree.size() == 0)
   {
@@ -86,24 +93,30 @@ void processGpu(cstone::Box<Real> &box,
       d_counts = std::vector<unsigned>{unsigned(np)};
   }
 
+  nvtxRangePushA("UpdateLeaves");
   while (!cstone::updateOctreeGpu<KeyType>({rawPtr(d_keys), d_keys.size()}, bucketSize, d_tree, d_counts,
                                                  tmpTree, workArray));
+  nvtxRangePop();
 
+  nvtxRangePushA("UpdateInternal");
   octreeGpuData.resize(cstone::nNodes(d_tree));
   cstone::buildOctreeGpu(rawPtr(d_tree), octreeGpuData.data());
 
   d_layout.resize(d_counts.size() + 1);
   cstone::fillGpu(rawPtr(d_layout), rawPtr(d_layout) + 1, cstone::LocalIndex(0));
   cstone::inclusiveScanGpu(rawPtr(d_counts), rawPtr(d_counts) + d_counts.size(), rawPtr(d_layout) + 1);
+  nvtxRangePop();
 }
 
-void runnerGpu(std::vector<KeyType> &keys, std::vector<Real> &ix,
-               std::vector<Real> &iy, std::vector<Real> &iz,
-               std::vector<Real> &h, std::vector<Real> &px,
-               std::vector<Real> &py, std::vector<Real> &pz, int rank,
+void runnerGpu(const std::vector<KeyType> &keys, const std::vector<Real> &ix,
+               const std::vector<Real> &iy, const std::vector<Real> &iz,
+               const std::vector<Real> &h, const std::vector<Real> &px,
+               const std::vector<Real> &py, const std::vector<Real> &pz, int rank,
                int numRanks, int bucketSize, int bucketSizeFocus, float theta,
-               std::string group_name) {
-  cstone::Box<Real> box{-1.5, 1.5};
+               std::string group_name, bool save) {
+  cstone::Box<Real> box{-1.15, 1.15};
+
+  std::vector<Real> x(ix), y(iy), z(iz);
 
   size_t np = keys.size();
   int call_count = 1;
@@ -121,7 +134,7 @@ void runnerGpu(std::vector<KeyType> &keys, std::vector<Real> &ix,
 
   cstone::DeviceVector<int> d_ordering(keys.size()), d_values_tmp(keys.size());
   cstone::DeviceVector<Real> tmp(keys.size());
-  cstone::DeviceVector<Real> d_ix(ix), d_iy(iy), d_iz(iz);
+  cstone::DeviceVector<Real> d_ix(x), d_iy(y), d_iz(z);
   cstone::DeviceVector<cstone::LocalIndex> d_layout;
 
   uint64_t tempStorageEle = cstone::sortByKeyTempStorage<KeyType, cstone::LocalIndex>(np);
@@ -146,14 +159,14 @@ void runnerGpu(std::vector<KeyType> &keys, std::vector<Real> &ix,
 
   #pragma omp parallel for
   for (auto i = 0; i < ix.size(); ++i) {
-    ix[i] += px[i];
-    iy[i] += py[i];
-    iz[i] += pz[i];
+    x[i] += px[i];
+    y[i] += py[i];
+    z[i] += pz[i];
   }
 
-  d_ix = ix;
-  d_iy = iy;
-  d_iz = iz;
+  d_ix = x;
+  d_iy = y;
+  d_iz = z;
 
   nvtxRangePushA("Perturb");
   sync_ms = timeGpu(f);
@@ -170,14 +183,16 @@ void runnerGpu(std::vector<KeyType> &keys, std::vector<Real> &ix,
   // saveOctreeH5Gpu(domain, group_name + "_perturbed", x, y, z, keys);
 }
 
-void runnerGpuMulti(std::vector<KeyType> &keys, std::vector<Real> &ix,
-               std::vector<Real> &iy, std::vector<Real> &iz,
-               std::vector<Real> &h, std::vector<Real> &px,
-               std::vector<Real> &py, std::vector<Real> &pz, int rank,
+void runnerGpuMulti(const std::vector<KeyType> &keys, const std::vector<Real> &ix,
+               const std::vector<Real> &iy, const std::vector<Real> &iz,
+               const std::vector<Real> &h, const std::vector<Real> &px,
+               const std::vector<Real> &py, const std::vector<Real> &pz, int rank,
                int numRanks, int bucketSize, int bucketSizeFocus, float theta,
-               std::string group_name) {
+               std::string group_name, bool save) {
   size_t free_initial_byte, free_byte;
   size_t total_initial_byte, total_byte;
+
+  cudaDeviceSynchronize();
 
   // Get memory info
   checkGpuErrors(cudaMemGetInfo(&free_initial_byte, &total_initial_byte));
@@ -201,7 +216,9 @@ void runnerGpuMulti(std::vector<KeyType> &keys, std::vector<Real> &ix,
                 std::tie(d_s1, d_s2, d_s3));
   };
 
+  nvtxRangePush("DomainSyncInitial");
   float sync_ms = timeGpu(sync_f);
+  nvtxRangePop();
 
   checkGpuErrors(cudaMemGetInfo(&free_byte, &total_byte));
   size_t consumed = total_byte - free_byte - used_initial_byte;
@@ -211,16 +228,17 @@ void runnerGpuMulti(std::vector<KeyType> &keys, std::vector<Real> &ix,
               << "us, Memory Usage: " << consumed / (1024 * 1024) << "Mb"
               << std::endl;
 
-  x.resize(d_ix.size());
-  y.resize(d_iy.size());
-  z.resize(d_iz.size());
-  keys.resize(d_keys.size());
-  cudaMemcpy(x.data(), d_ix.data(), d_ix.size() * sizeof(Real), cudaMemcpyDeviceToHost);
-  cudaMemcpy(y.data(), d_iy.data(), d_iy.size() * sizeof(Real), cudaMemcpyDeviceToHost);
-  cudaMemcpy(z.data(), d_iz.data(), d_iz.size() * sizeof(Real), cudaMemcpyDeviceToHost);
-  cudaMemcpy(keys.data(), d_keys.data(), d_keys.size() * sizeof(KeyType), cudaMemcpyDeviceToHost);
+  // x.resize(d_ix.size());
+  // y.resize(d_iy.size());
+  // z.resize(d_iz.size());
+  // keys.resize(d_keys.size());
+  // cudaMemcpy(x.data(), d_ix.data(), d_ix.size() * sizeof(Real), cudaMemcpyDeviceToHost);
+  // cudaMemcpy(y.data(), d_iy.data(), d_iy.size() * sizeof(Real), cudaMemcpyDeviceToHost);
+  // cudaMemcpy(z.data(), d_iz.data(), d_iz.size() * sizeof(Real), cudaMemcpyDeviceToHost);
+  // cudaMemcpy(keys.data(), d_keys.data(), d_keys.size() * sizeof(KeyType), cudaMemcpyDeviceToHost);
 
-  saveDomainOctreeH5Gpu(domain, group_name + "_initial", rank, numRanks, x, y, z, keys);
+  // if (save)
+  //   saveDomainOctreeH5Gpu(domain, group_name + "_initial", rank, numRanks, x, y, z, keys);
 
   thrust::transform(thrust::device, d_ix.data() + domain.startIndex(),
                     d_ix.data() + domain.endIndex(),
@@ -235,7 +253,9 @@ void runnerGpuMulti(std::vector<KeyType> &keys, std::vector<Real> &ix,
                     d_pz.data() + domain.startIndex(),
                     d_iz.data() + domain.startIndex(), thrust::plus<Real>());
 
+  nvtxRangePush("DomainSyncPerturb");
   sync_ms = timeGpu(sync_f);
+  nvtxRangePop();
 
   checkGpuErrors(cudaMemGetInfo(&free_byte, &total_byte));
   consumed = total_byte - free_byte - used_initial_byte;
@@ -245,24 +265,15 @@ void runnerGpuMulti(std::vector<KeyType> &keys, std::vector<Real> &ix,
               << "us, Memory Usage: " << consumed / (1024 * 1024) << "Mb"
               << std::endl;
 
-  x.resize(d_ix.size());
-  y.resize(d_iy.size());
-  z.resize(d_iz.size());
-  keys.resize(d_keys.size());
-  cudaMemcpy(x.data(), d_ix.data(), d_ix.size() * sizeof(Real), cudaMemcpyDeviceToHost);
-  cudaMemcpy(y.data(), d_iy.data(), d_iy.size() * sizeof(Real), cudaMemcpyDeviceToHost);
-  cudaMemcpy(z.data(), d_iz.data(), d_iz.size() * sizeof(Real), cudaMemcpyDeviceToHost);
-  cudaMemcpy(keys.data(), d_keys.data(), d_keys.size() * sizeof(KeyType), cudaMemcpyDeviceToHost);
+  // x.resize(d_ix.size());
+  // y.resize(d_iy.size());
+  // z.resize(d_iz.size());
+  // keys.resize(d_keys.size());
+  // cudaMemcpy(x.data(), d_ix.data(), d_ix.size() * sizeof(Real), cudaMemcpyDeviceToHost);
+  // cudaMemcpy(y.data(), d_iy.data(), d_iy.size() * sizeof(Real), cudaMemcpyDeviceToHost);
+  // cudaMemcpy(z.data(), d_iz.data(), d_iz.size() * sizeof(Real), cudaMemcpyDeviceToHost);
+  // cudaMemcpy(keys.data(), d_keys.data(), d_keys.size() * sizeof(KeyType), cudaMemcpyDeviceToHost);
 
-  saveDomainOctreeH5Gpu(domain, group_name + "_perturbed", rank, numRanks, x, y, z, keys);
-
-  sync_ms = timeGpu(sync_f);
-
-  checkGpuErrors(cudaMemGetInfo(&free_byte, &total_byte));
-  consumed = total_byte - free_byte - used_initial_byte;
-
-  if (rank == 0)
-    std::cout << "\tDomain Sync without Perturbations: " << sync_ms
-              << "us, Memory Usage: " << consumed / (1024 * 1024) << "Mb\n"
-              << std::endl;
+// if (save)
+// saveDomainOctreeH5Gpu(domain, group_name + "_perturbed", rank, numRanks, x, y, z, keys);
 }
