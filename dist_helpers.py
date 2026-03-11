@@ -25,10 +25,61 @@ def rectangular_initial(n):
     return x, y, z
 
 def pancake_initial(n):
-    x = np.random.uniform(-1, 1, n)
-    y = np.random.uniform(-1, 1, n)
-    z = np.random.uniform(-0.1, 0.1, n)
-    return x, y, z
+    r = np.random.normal(scale = .3, size = n)
+    r = np.clip(r, -1, 1)
+    r = np.abs(r)
+    r = np.sqrt(r)
+    t = np.random.uniform(0, 2 * np.pi, n)
+    x = r * np.cos(t)
+    y = r * np.sin(t)
+    z = np.random.uniform(-0.05, 0.05, n)
+    return x,y,z
+
+def pancake_initial_tilted(n):
+    r = np.random.normal(scale = .3, size = n)
+    r = np.clip(r, -1, 1)
+    r = np.abs(r)
+    r = np.sqrt(r)
+    t = np.random.uniform(0, 2 * np.pi, n)
+    x = r * np.cos(t)
+    y = r * np.sin(t)
+    z = x
+    return x,y,z
+
+def spherical_initial(n):
+    r = np.random.normal(scale = .3, size = n)
+    r = np.clip(r, -1, 1)
+    r = np.abs(r)
+    r = np.cbrt(r)
+    phi = np.random.uniform(-1, 1, n)
+    phi = np.arccos(2 * phi - 1)
+    theta = np.random.uniform(0, 2 * np.pi, n)
+    x = r * np.sin(phi) * np.cos(theta)
+    y = r * np.sin(phi) * np.sin(theta)
+    z = r * np.cos(phi)
+    return x,y,z
+
+def filament_z_initial(n):
+    t = np.random.uniform(-1, 1, n)
+    x = np.zeros(n)
+    y = np.zeros(n)
+    z = t
+    return x,y,z
+
+def filament_yz_initial(n):
+    t = np.random.uniform(-1, 1, n)
+    x = np.zeros(n)
+    y = t
+    z = t
+    return x,y,z
+
+def filament_xyz_initial(n):
+    t = np.random.uniform(-1, 1, n)
+    x = t
+    y = t
+    z = t
+    return x,y,z
+
 # In[2]:
 
 
