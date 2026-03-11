@@ -153,9 +153,14 @@ void runnerGpu(const std::vector<KeyType> &keys, const std::vector<Real> &ix,
     std::cout << "\tUpdate Octree Initial: " << sync_ms << "us, call count: " << call_count
               << std::endl;
 
-  // thrust::copy(thrust::host, d_keys.data(), d_keys.data() + d_keys.size(), keys.begin());
-
-  // saveOctreeH5Gpu(, group_name + "_initial", rank, numRanks, x, y, z, keys);
+  if (save) {
+    std::vector<KeyType> keys_host(d_keys.size());
+    cudaMemcpy(x.data(), d_ix.data(), np * sizeof(Real), cudaMemcpyDeviceToHost);
+    cudaMemcpy(y.data(), d_iy.data(), np * sizeof(Real), cudaMemcpyDeviceToHost);
+    cudaMemcpy(z.data(), d_iz.data(), np * sizeof(Real), cudaMemcpyDeviceToHost);
+    cudaMemcpy(keys_host.data(), d_keys.data(), np * sizeof(KeyType), cudaMemcpyDeviceToHost);
+    saveOctreeH5Gpu(box, octreeGpuData, d_tree, group_name + "_initial", rank, numRanks, x, y, z, keys_host);
+  }
 
   #pragma omp parallel for
   for (auto i = 0; i < ix.size(); ++i) {
@@ -178,9 +183,14 @@ void runnerGpu(const std::vector<KeyType> &keys, const std::vector<Real> &ix,
     std::cout << "\tPerturbation update time: " << sync_ms << " us, call count: " << call_count
               << std::endl;
   
-  // thrust::copy(thrust::host, d_keys.data(), d_keys.data() + d_keys.size(), keys.begin());
-
-  // saveOctreeH5Gpu(domain, group_name + "_perturbed", x, y, z, keys);
+  if (save) {
+    std::vector<KeyType> keys_host(d_keys.size());
+    cudaMemcpy(x.data(), d_ix.data(), np * sizeof(Real), cudaMemcpyDeviceToHost);
+    cudaMemcpy(y.data(), d_iy.data(), np * sizeof(Real), cudaMemcpyDeviceToHost);
+    cudaMemcpy(z.data(), d_iz.data(), np * sizeof(Real), cudaMemcpyDeviceToHost);
+    cudaMemcpy(keys_host.data(), d_keys.data(), np * sizeof(KeyType), cudaMemcpyDeviceToHost);
+    saveOctreeH5Gpu(box, octreeGpuData, d_tree, group_name + "_perturbed", rank, numRanks, x, y, z, keys_host);
+  }
 }
 
 void runnerGpuMulti(const std::vector<KeyType> &keys, const std::vector<Real> &ix,
@@ -274,6 +284,6 @@ void runnerGpuMulti(const std::vector<KeyType> &keys, const std::vector<Real> &i
   // cudaMemcpy(z.data(), d_iz.data(), d_iz.size() * sizeof(Real), cudaMemcpyDeviceToHost);
   // cudaMemcpy(keys.data(), d_keys.data(), d_keys.size() * sizeof(KeyType), cudaMemcpyDeviceToHost);
 
-// if (save)
-// saveDomainOctreeH5Gpu(domain, group_name + "_perturbed", rank, numRanks, x, y, z, keys);
+  // if (save)
+  //   saveDomainOctreeH5Gpu(domain, group_name + "_perturbed", rank, numRanks, x, y, z, keys);
 }

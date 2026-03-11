@@ -132,10 +132,8 @@ def _format_particle_count(n):
 
 
 def _format_scale(scale):
-    exp = -np.log10(scale)
-    if abs(exp - round(exp)) < 1e-9:
-        return f"em{int(round(exp))}"
-    return f"em{exp:.2f}".replace('.', 'p').replace('-', 'n')
+    s = f"{scale:g}"
+    return f"s{s.replace('.', 'p').replace('-', 'n')}"
 
 
 def _rotation_matrix(rx, ry, rz):

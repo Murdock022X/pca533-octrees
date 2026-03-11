@@ -46,6 +46,42 @@ inline OctreeHostData collectFocusOctreeGpu(
   return collectOctreeFromViewGpu(view, leaves.data(), leaves.size());
 }
 
+inline void saveOctreeH5Gpu(
+    const cstone::Box<Real> &box,
+    const cstone::OctreeData<KeyType, cstone::GpuTag> &octreeData,
+    const cstone::DeviceVector<KeyType> &d_tree,
+    const std::string &spec, int rank, int numRanks,
+    std::vector<Real> &x, std::vector<Real> &y, std::vector<Real> &z,
+    std::vector<KeyType> &keys) {
+  auto view = octreeData.cdata();
+  if (view.numLeafNodes == 0) return;
+
+  auto oct = collectOctreeFromViewGpu(view, rawPtr(d_tree), d_tree.size());
+
+  std::string safeSpec = sanitizeSpec(spec);
+  std::filesystem::create_directories("outputs");
+  std::filesystem::path outputPath =
+      std::filesystem::path("outputs") /
+      ("domain_" + safeSpec + "_rank" + std::to_string(rank) + ".h5");
+
+  HighFive::File out(outputPath.string(), HighFive::File::Overwrite);
+
+  std::vector<Real> boxVec{box.xmin(), box.xmax(), box.ymin(),
+                           box.ymax(), box.zmin(), box.zmax()};
+  out.createDataSet("domain_box", boxVec);
+  out.createAttribute("rank", rank);
+  out.createAttribute("num_ranks", numRanks);
+
+  writeOctreeGroup(out, "global_octree", oct, box);
+  out.createDataSet("x", x);
+  out.createDataSet("y", y);
+  out.createDataSet("z", z);
+  out.createDataSet("keys", keys);
+
+  if (rank == 0)
+    std::cout << "\tSaved octree HDF5: " << outputPath << std::endl;
+}
+
 inline void saveDomainOctreeH5Gpu(
     const cstone::Domain<KeyType, Real, cstone::GpuTag> &domain,
     const std::string &spec, int rank, int numRanks, std::vector<Real> &x, std::vector<Real> &y, std::vector<Real> &z, std::vector<KeyType> &keys) {

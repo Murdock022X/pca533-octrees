@@ -1,20 +1,24 @@
 #!/usr/bin/env python
-from dist_helpers import (
-    uniform_initial, normal_initial, rectangular_initial, pancake_initial,
-    generate_dists,
-)
+from dist_helpers import *
+from run_batches import run_batches
 import numpy as np
 
-dist = generate_dists(
-    generators=[uniform_initial, normal_initial, rectangular_initial, pancake_initial],
-    n_particles=[1e4, 1e5, 1e6],
-    scale_factors=[0.001, 0.01, 0.1, .5],
-    # rotations=[(0, 0, 0), (np.pi / 4, 0, 0), (0, np.pi / 6, np.pi / 3)],
+run_batches(
+    generators=[spherical_initial],
+    n_particles=[1e4, 1e5, 1e6, 1e7, 1e8],
+    scale_factors=[0.001],
     rotations=None,
     out_of_bounds='truncate',
 )
 
-print(f"\n{'='*60}")
-print(f"Generated {len(dist)} distributions:\n")
-for i, (name, (x, y, z), _) in enumerate(dist, 1):
-    print(f"  {i:3d}. {name}  ({len(x)} particles)")
+# run_batches(
+#     generators=[
+#         uniform_initial, normal_initial, rectangular_initial,
+#         pancake_initial, pancake_initial_tilted, spherical_initial,
+#         filament_z_initial, filament_yz_initial, filament_xyz_initial,
+#     ],
+#     n_particles=[1e4, 1e5, 1e6, 1e7, 1e8],
+#     scale_factors=[0.001, 0.01, 0.1, .5],
+#     rotations=None,
+#     out_of_bounds='truncate',
+# )

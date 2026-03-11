@@ -16,6 +16,10 @@ Each file contains:
 ### 1) Run octree build (GPU)
 
 ```bash
+cmake -S . -B build -DCMAKE_CXX_COMPILER=mpicxx -DCMAKE_CUDA_HOST_COMPILER=mpicxx -DCMAKE_CUDA_FLAGS="-I/usr/lib/x86_64-linux-gnu/openmpi/include" -DCMAKE_CXX_FLAGS="-I/usr/include/hdf5/serial" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DGPU_DIRECT=ON
+
+cmake --build ./build -j
+
 mpirun -n 1 ./build/src/pca --gpu <dataset.h5> <group_name>
 ```
 
