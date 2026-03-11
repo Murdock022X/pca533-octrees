@@ -129,8 +129,10 @@ def _generate_plots(name, output_folder):
                 sys.executable, str(PLOT_SCRIPT),
                 str(h5_path),
                 "--tree", tree,
+                "--leaves-only",
+                "--slice-axis", "z", "--slice-pos", "0",
                 "-o", str(png_path),
-                "--title", f"{name} ({tree})",
+                "--title", f"{name} ({tree}) slice z=0",
             ]
             print(f"  Plotting {png_name} ...", end=" ", flush=True)
             r = subprocess.run(cmd, capture_output=True, text=True)
