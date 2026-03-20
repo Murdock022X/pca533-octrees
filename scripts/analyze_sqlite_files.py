@@ -27,6 +27,14 @@ hatch_info = {
 'UpdateLeaves': ('\\'),
 }
 
+scientific = {
+'n10k': ('10^4'), 
+'n100k': ('10^5'), 
+'n1m': ('10^6'), 
+'n10m': ('10^7'), 
+'n100m': ('10^8'),
+}
+
 for quantity in quantities:
     dictionary = dict()
     composition = dict()
@@ -81,8 +89,8 @@ for quantity in quantities:
         for dist, graphData in composition.items():
             labels = []
             for key, value in graphData.items():
-                labels.append("."+key[3:] + "_I")
-                labels.append("."+key[3:] + "_P")
+                labels.append("Init")
+                labels.append("."+key[3:])
 
             partitioned = dict()
 
@@ -91,10 +99,10 @@ for quantity in quantities:
                 for metric in value[0]:
                     if(metric[0] not in partitioned):
                         partitioned[metric[0]] = []
-                    partitioned[metric[0]].append(metric[1])
+                    partitioned[metric[0]].append(metric[1]/1000000)
                     if(value[1][i][0] not in partitioned):
                         partitioned[value[1][i][0]] = []
-                    partitioned[value[1][i][0]].append(value[1][i][1])
+                    partitioned[value[1][i][0]].append(value[1][i][1]/1000000)
                     i = i + 1
                     
             width = .75
@@ -110,8 +118,10 @@ for quantity in quantities:
             for label, partition in partitioned.items():
                 p = ax.bar(x = spacing, height = partition, width = width, label=label, bottom=bottom, align = 'center', hatch = hatch_info[label])
                 bottom += partition
-
+            ax.set_ylabel('Execution Time (ms)')
+            ax.set_xlabel('Perturbation Strength')
             ax.legend()
+            ax.set_title("Breakdown of " + dist + " with n = $"+scientific[quantity]+"$")
             plt.xticks(spacing, labels=labels)
             plt.savefig('..\\outputs_031126\\breakdown_' + quantity + '_' + dist + '.png', bbox_inches="tight")
             
@@ -133,15 +143,18 @@ for quantity in quantities:
         for dist, perturbations in dictionary.items():
             ys = []
             for perturbation, values in perturbations.items():
-                ys.append(values[1][1] / values[0][1])
+                ys.append(100 * values[1][1] / values[0][1])
             dist_plot, = ax.plot(x_pos, ys, ls = graph_info[dist][0], marker = graph_info[dist][1], linewidth=2, color = 'k')
             plots.append(dist_plot)
             names.append(graph_info[dist][2])
         
         ax.legend(plots, names)
         
+        ax.set_ylabel('Percent Change')
+        ax.set_xlabel('Perturbation Strength')
         plt.xticks(x_pos, labels=[str(x) for x in x])
         #plt.ylim(.36, 1.44)
+        ax.set_title("Relative Change in Execution Time After Perturbation for n = $"+scientific[quantity]+"$")
         plt.savefig('..\\outputs_031126\\plotted_' + quantity + '.png', bbox_inches="tight")
 
     with open('..\\outputs_031126\\analyzed_relative_' + quantity + '.csv', 'w', newline='') as csvfile:
