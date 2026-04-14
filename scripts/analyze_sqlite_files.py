@@ -118,6 +118,8 @@ for quantity in quantities:
             for label, partition in partitioned.items():
                 p = ax.bar(x = spacing, height = partition, width = width, label=label, bottom=bottom, align = 'center', hatch = hatch_info[label])
                 bottom += partition
+            plt.grid(axis='y')
+            ax.set_axisbelow(True)
             ax.set_ylabel('Execution Time (ms)')
             ax.set_xlabel('Perturbation Strength')
             ax.legend()
@@ -127,9 +129,37 @@ for quantity in quantities:
             
     
     
-    
-    
-    
+    if True:
+        labels = []
+        
+        partitioned = dict()
+
+        for key, value in composition.items():
+            labels.append(graph_info[key][2])
+            for metric in value['s0p001'][0]:
+                if(metric[0] not in partitioned):
+                    partitioned[metric[0]] = []
+                partitioned[metric[0]].append(metric[1]/1000000)
+
+        width = .75
+
+        fig, ax = plt.subplots()
+        bottom = np.zeros(6)
+
+
+        for boolean, partition in partitioned.items():
+            #print(boolean)
+            p = ax.bar(x = labels, height = partition, width = width, label=boolean, bottom=bottom, align = 'center', hatch = hatch_info[boolean])
+            bottom += partition
+            
+        ax.tick_params(axis='x', which='major', labelsize=8)
+        plt.grid(axis='y')
+        ax.set_axisbelow(True)
+        ax.set_ylabel('Execution Time (ms)')
+        ax.set_xlabel('Distribution')
+        ax.legend()
+        ax.set_title("Breakdown of inital distributions with n = $"+scientific[quantity]+"$")
+        plt.savefig('..\\outputs_031126\\breakdown_' + quantity + '.png', bbox_inches="tight")
     
     
     if True:
@@ -153,7 +183,8 @@ for quantity in quantities:
         ax.set_ylabel('Percent Change')
         ax.set_xlabel('Perturbation Strength')
         plt.xticks(x_pos, labels=[str(x) for x in x])
-        #plt.ylim(.36, 1.44)
+        plt.grid(axis='y')
+        ax.set_axisbelow(True)
         ax.set_title("Relative Change in Execution Time After Perturbation for n = $"+scientific[quantity]+"$")
         plt.savefig('..\\outputs_031126\\plotted_' + quantity + '.png', bbox_inches="tight")
 
