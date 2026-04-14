@@ -86,7 +86,8 @@ uint64_t tStorage(uint64_t numElements)
 
     uint64_t tempStorageBytes = 0;
     cub::DeviceRadixSort::SortPairs(nullptr, tempStorageBytes, d_keys, d_values, numElements);
-    std::cout << "Temp storage bytes for " << numElements << " elements: " << tempStorageBytes << std::endl;
+    // std::cout << "Temp storage bytes for " << numElements << " elements: " << tempStorageBytes << std::endl;
+    // std::cout << "Cub bytes " << tempStorageBytes << std::endl;
     return tempStorageBytes;
 }
 
@@ -105,26 +106,27 @@ void processGpuVec(cstone::Box<Real> &box,
 
   nvtxRangePushA("ComputeKeys");
   computeSfcKeysGpu(d_vals, cstone::sfcKindPointer(d_keys), np, box);
-  cudaDeviceSynchronize();
+  // cudaDeviceSynchronize();
   nvtxRangePop();
 
   // cub::DoubleBuffer<KeyType> d_keys(rawPtr(d_keys), rawPtr(d_keys_tmp));
   // cub::DoubleBuffer<ValueType> d_values(d_vals, rawPtr(d_values_tmp));
 
+  std::cout << "CUB storage bytes: " << tempStorageEle << std::endl;
+
   nvtxRangePushA("SortKeys");
+  cub::DoubleBuffer<KeyType> keys(d_keys, d_keys_tmp);
+  cub::DoubleBuffer<float4>  vals(d_vals, d_values_tmp);
   // cstone::sequenceGpu(rawPtr(d_ordering), np, 0);
-  cub::DeviceRadixSort::SortPairs(cubTmpStorage, tempStorageEle, d_keys, d_keys_tmp, d_vals, d_values_tmp, np);
+  cudaError_t err = cub::DeviceRadixSort::SortPairs(cubTmpStorage, tempStorageEle, keys, vals, np);
   // thrust::sort_by_key(thrust::device, d_keys, d_keys + np, d_vals);
   // cstone::sortByKeyGpu(rawPtr(d_keys), rawPtr(d_keys) + np, d_vals, rawPtr(d_keys_tmp), d_values_tmp, rawPtr(cubTmpStorage), tempStorageEle);
   nvtxRangePop();
 
-  KeyType* t = d_keys;
-  d_keys = d_keys_tmp;
-  d_keys_tmp = t;
+  std::cout << "Error after sort: " << cudaGetErrorString(err) << std::endl;
 
-  float4* tVal = d_vals;
-  d_vals = d_values_tmp;
-  d_values_tmp = tVal;
+  d_keys = keys.Current();
+  d_vals = vals.Current();
 
   // nvtxRangePushA("ReorderXYZK");
   // thrust::gather(thrust::device, rawPtr(d_ordering), rawPtr(d_ordering) + np, rawPtr(d_x), tmp.data());
@@ -155,6 +157,7 @@ void processGpuVec(cstone::Box<Real> &box,
   cstone::fillGpu(rawPtr(d_layout), rawPtr(d_layout) + 1, cstone::LocalIndex(0));
   cstone::inclusiveScanGpu(rawPtr(d_counts), rawPtr(d_counts) + d_counts.size(), rawPtr(d_layout) + 1);
   nvtxRangePop();
+  cudaDeviceSynchronize();
 }
 
 void processGpuVecGather(cstone::Box<float> &box, 
@@ -206,6 +209,7 @@ void processGpuVecGather(cstone::Box<float> &box,
   cstone::fillGpu(rawPtr(d_layout), rawPtr(d_layout) + 1, cstone::LocalIndex(0));
   cstone::inclusiveScanGpu(rawPtr(d_counts), rawPtr(d_counts) + d_counts.size(), rawPtr(d_layout) + 1);
   nvtxRangePop();
+  cudaDeviceSynchronize();
 }
 
 void processGpu(cstone::Box<Real> &box, 
@@ -262,127 +266,27 @@ void processGpu(cstone::Box<Real> &box,
   nvtxRangePop();
 }
 
-std::pair<double, double> runnerGpu(const std::vector<KeyType> &keys, const std::vector<Real> &ix,
-               const std::vector<Real> &iy, const std::vector<Real> &iz,
-               const std::vector<Real> &h, const std::vector<Real> &px,
-               const std::vector<Real> &py, const std::vector<Real> &pz, int rank,
-               int numRanks, int bucketSize, int bucketSizeFocus, float theta,
-               std::string group_name, bool save) {
-  cstone::Box<Real> box{-1.15, 1.15};
-
-  cudaSetDevice(0);
-
-  std::vector<Real> x(ix), y(iy), z(iz);
-
-  std::pair<double, double> t;
-
-  size_t np = keys.size();
-  int call_count = 1;
-
-  std::vector<float4> vals(keys.size());
-  for (size_t i = 0; i < keys.size(); ++i) {
-    vals[i] = make_float4(x[i], y[i], z[i], h[i]);
-  }
-
-  std::cout << "Running GPU Octree Build and Sync Benchmark with " << np
-            << " particles, bucket size: " << bucketSize
-            << ", theta: " << theta << std::endl;
-  
-  cstone::DeviceVector<KeyType> d_keys(keys.size());
-  cstone::DeviceVector<KeyType> d_tree, tmpTree;
-  cstone::OctreeData<KeyType, cstone::GpuTag> octreeGpuData;
-  cstone::DeviceVector<KeyType> d_keys_tmp(keys.size());
-  cstone::DeviceVector<unsigned> d_counts;
-  cstone::DeviceVector<cstone::TreeNodeIndex> workArray;
-
-  cstone::DeviceVector<int> d_ordering(keys.size());
-  cstone::DeviceVector<Real> tmp(keys.size());
-  float4 *d_vals, *d_values_tmp;
-  cudaMalloc<float4>(&d_vals, vals.size() * sizeof(float4));
-  cudaMemcpy(d_vals, vals.data(), vals.size() * sizeof(float4), cudaMemcpyHostToDevice);
-  cudaMalloc<float4>(&d_values_tmp, vals.size() * sizeof(float4));
-
-  cstone::DeviceVector<cstone::LocalIndex> d_layout;
-
-  uint64_t tempStorageEle = tStorage<KeyType, float4>(np);
-  char* cubTmpStorage;
-  cudaMalloc<char>(&cubTmpStorage, tempStorageEle);
-
-  std::cout << "Temp storage bytes: " << tempStorageEle << std::endl;
-
-  auto f = [&]() {
-    processGpuVec(box, rawPtr(d_keys), rawPtr(d_keys_tmp), d_values_tmp, cubTmpStorage, tempStorageEle, 
-      d_counts, workArray, d_layout, d_tree, tmpTree, octreeGpuData, d_vals, bucketSize, np);
-  };
-  
-  nvtxRangePushA("Initial");
-  float sync_ms = timeGpu(f);
-  nvtxRangePop();
-
-  t.first = sync_ms;
-
-  if (rank == 0)
-    std::cout << "\tUpdate Octree Initial: " << sync_ms << "us, call count: " << call_count
-              << std::endl;
-
-  // if (save) {
-  //   std::vector<KeyType> keys_host(d_keys.size());
-  //   cudaMemcpy(x.data(), d_ix.data(), np * sizeof(Real), cudaMemcpyDeviceToHost);
-  //   cudaMemcpy(y.data(), d_iy.data(), np * sizeof(Real), cudaMemcpyDeviceToHost);
-  //   cudaMemcpy(z.data(), d_iz.data(), np * sizeof(Real), cudaMemcpyDeviceToHost);
-  //   cudaMemcpy(keys_host.data(), d_keys.data(), np * sizeof(KeyType), cudaMemcpyDeviceToHost);
-  //   saveOctreeH5Gpu(box, octreeGpuData, d_tree, group_name + "_initial", rank, numRanks, x, y, z, keys_host);
-  // }
-
-  #pragma omp parallel for
-  for (auto i = 0; i < vals.size(); ++i) {
-    vals[i].x += px[i];
-    vals[i].y += py[i];
-    vals[i].z += pz[i];
-  }
-
-  cudaMemcpy(d_vals, vals.data(), vals.size() * sizeof(float4), cudaMemcpyHostToDevice);
-
-  nvtxRangePushA("Perturb");
-  sync_ms = timeGpu(f);
-  nvtxRangePop();
-
-  t.second = sync_ms;
-
-  call_count = 1;
-
-  if (rank == 0)
-    std::cout << "\tPerturbation update time: " << sync_ms << " us, call count: " << call_count
-              << std::endl;
-  
-
-  cudaFree(d_vals);
-  cudaFree(d_values_tmp);
-  cudaFree(cubTmpStorage);
-  // if (save) {
-  //   std::vector<KeyType> keys_host(d_keys.size());
-  //   cudaMemcpy(x.data(), d_ix.data(), np * sizeof(Real), cudaMemcpyDeviceToHost);
-  //   cudaMemcpy(y.data(), d_iy.data(), np * sizeof(Real), cudaMemcpyDeviceToHost);
-  //   cudaMemcpy(z.data(), d_iz.data(), np * sizeof(Real), cudaMemcpyDeviceToHost);
-  //   cudaMemcpy(keys_host.data(), d_keys.data(), np * sizeof(KeyType), cudaMemcpyDeviceToHost);
-  //   saveOctreeH5Gpu(box, octreeGpuData, d_tree, group_name + "_perturbed", rank, numRanks, x, y, z, keys_host);
-  // }
-
-  return t;
-}
-
 // std::pair<double, double> runnerGpu(const std::vector<KeyType> &keys, const std::vector<Real> &ix,
 //                const std::vector<Real> &iy, const std::vector<Real> &iz,
 //                const std::vector<Real> &h, const std::vector<Real> &px,
 //                const std::vector<Real> &py, const std::vector<Real> &pz, int rank,
 //                int numRanks, int bucketSize, int bucketSizeFocus, float theta,
 //                std::string group_name, bool save) {
-//   cstone::Box<float> box{-1.15, 1.15};
+//   cstone::Box<Real> box{-1.15, 1.15};
+
+//   cudaSetDevice(0);
+
+//   std::vector<Real> x(ix), y(iy), z(iz);
 
 //   std::pair<double, double> t;
 
 //   size_t np = keys.size();
 //   int call_count = 1;
+
+//   std::vector<float4> vals(keys.size());
+//   for (size_t i = 0; i < keys.size(); ++i) {
+//     vals[i] = make_float4(x[i], y[i], z[i], h[i]);
+//   }
 
 //   std::cout << "Running GPU Octree Build and Sync Benchmark with " << np
 //             << " particles, bucket size: " << bucketSize
@@ -395,26 +299,23 @@ std::pair<double, double> runnerGpu(const std::vector<KeyType> &keys, const std:
 //   cstone::DeviceVector<unsigned> d_counts;
 //   cstone::DeviceVector<cstone::TreeNodeIndex> workArray;
 
-//   cstone::DeviceVector<int> d_ordering(keys.size()), d_values_tmp(keys.size());
-//   float4* tmp;
-//   cudaMalloc<float4>(&tmp, keys.size() * sizeof(float4));
-//   // cstone::DeviceVector<Real> d_ix(x), d_iy(y), d_iz(z);
+//   cstone::DeviceVector<int> d_ordering(keys.size());
+//   cstone::DeviceVector<Real> tmp(keys.size());
+//   float4 *d_vals, *d_values_tmp;
+//   cudaMalloc<float4>(&d_vals, vals.size() * sizeof(float4));
+//   cudaMemcpy(d_vals, vals.data(), vals.size() * sizeof(float4), cudaMemcpyHostToDevice);
+//   cudaMalloc<float4>(&d_values_tmp, vals.size() * sizeof(float4));
+
 //   cstone::DeviceVector<cstone::LocalIndex> d_layout;
 
-//   std::vector<float4> vals(keys.size());
-//   for (size_t i = 0; i < keys.size(); ++i) {
-//     vals[i] = make_float4(ix[i], iy[i], iz[i], h[i]);
-//   }
+//   uint64_t tempStorageEle = tStorage<KeyType, float4>(np);
+//   char* cubTmpStorage;
+//   cudaMalloc<char>(&cubTmpStorage, tempStorageEle);
 
-//   float4 *d_vals;
-//   cudaMalloc<float4>(&d_vals, vals.size()*sizeof(float4));
-//   cudaMemcpy(d_vals, vals.data(), vals.size() * sizeof(float4), cudaMemcpyHostToDevice);
-
-//   uint64_t tempStorageEle = cstone::sortByKeyTempStorage<KeyType, cstone::LocalIndex>(np);
-//   cstone::DeviceVector<char> cubTmpStorage(tempStorageEle);
+//   std::cout << "Temp storage bytes: " << tempStorageEle << std::endl;
 
 //   auto f = [&]() {
-//     processGpuVecGather(box, d_keys, d_keys_tmp, d_ordering, d_values_tmp, tmp, cubTmpStorage, tempStorageEle, 
+//     processGpuVec(box, rawPtr(d_keys), rawPtr(d_keys_tmp), d_values_tmp, cubTmpStorage, tempStorageEle, 
 //       d_counts, workArray, d_layout, d_tree, tmpTree, octreeGpuData, d_vals, bucketSize, np);
 //   };
   
@@ -457,9 +358,11 @@ std::pair<double, double> runnerGpu(const std::vector<KeyType> &keys, const std:
 //   if (rank == 0)
 //     std::cout << "\tPerturbation update time: " << sync_ms << " us, call count: " << call_count
 //               << std::endl;
+  
 
 //   cudaFree(d_vals);
-  
+//   cudaFree(d_values_tmp);
+//   cudaFree(cubTmpStorage);
 //   // if (save) {
 //   //   std::vector<KeyType> keys_host(d_keys.size());
 //   //   cudaMemcpy(x.data(), d_ix.data(), np * sizeof(Real), cudaMemcpyDeviceToHost);
@@ -471,6 +374,107 @@ std::pair<double, double> runnerGpu(const std::vector<KeyType> &keys, const std:
 
 //   return t;
 // }
+
+std::pair<double, double> runnerGpu(const std::vector<KeyType> &keys, const std::vector<Real> &ix,
+               const std::vector<Real> &iy, const std::vector<Real> &iz,
+               const std::vector<Real> &h, const std::vector<Real> &px,
+               const std::vector<Real> &py, const std::vector<Real> &pz, int rank,
+               int numRanks, int bucketSize, int bucketSizeFocus, float theta,
+               std::string group_name, bool save) {
+  cstone::Box<float> box{-1.15, 1.15};
+
+  std::pair<double, double> t;
+
+  size_t np = keys.size();
+  int call_count = 1;
+
+  std::cout << "Running GPU Octree Build and Sync Benchmark with " << np
+            << " particles, bucket size: " << bucketSize
+            << ", theta: " << theta << std::endl;
+  
+  cstone::DeviceVector<KeyType> d_keys(keys.size());
+  cstone::DeviceVector<KeyType> d_tree, tmpTree;
+  cstone::OctreeData<KeyType, cstone::GpuTag> octreeGpuData;
+  cstone::DeviceVector<KeyType> d_keys_tmp(keys.size());
+  cstone::DeviceVector<unsigned> d_counts;
+  cstone::DeviceVector<cstone::TreeNodeIndex> workArray;
+
+  cstone::DeviceVector<int> d_ordering(keys.size()), d_values_tmp(keys.size());
+  float4* tmp;
+  cudaMalloc<float4>(&tmp, keys.size() * sizeof(float4));
+  // cstone::DeviceVector<Real> d_ix(x), d_iy(y), d_iz(z);
+  cstone::DeviceVector<cstone::LocalIndex> d_layout;
+
+  std::vector<float4> vals(keys.size());
+  for (size_t i = 0; i < keys.size(); ++i) {
+    vals[i] = make_float4(ix[i], iy[i], iz[i], h[i]);
+  }
+
+  float4 *d_vals;
+  cudaMalloc<float4>(&d_vals, vals.size()*sizeof(float4));
+  cudaMemcpy(d_vals, vals.data(), vals.size() * sizeof(float4), cudaMemcpyHostToDevice);
+
+  uint64_t tempStorageEle = cstone::sortByKeyTempStorage<KeyType, cstone::LocalIndex>(np);
+  cstone::DeviceVector<char> cubTmpStorage(tempStorageEle);
+
+  auto f = [&]() {
+    processGpuVecGather(box, d_keys, d_keys_tmp, d_ordering, d_values_tmp, tmp, cubTmpStorage, tempStorageEle, 
+      d_counts, workArray, d_layout, d_tree, tmpTree, octreeGpuData, d_vals, bucketSize, np);
+  };
+  
+  nvtxRangePushA("Initial");
+  float sync_ms = timeGpu(f);
+  nvtxRangePop();
+
+  t.first = sync_ms;
+
+  if (rank == 0)
+    std::cout << "\tUpdate Octree Initial: " << sync_ms << "us, call count: " << call_count
+              << std::endl;
+
+  // if (save) {
+  //   std::vector<KeyType> keys_host(d_keys.size());
+  //   cudaMemcpy(x.data(), d_ix.data(), np * sizeof(Real), cudaMemcpyDeviceToHost);
+  //   cudaMemcpy(y.data(), d_iy.data(), np * sizeof(Real), cudaMemcpyDeviceToHost);
+  //   cudaMemcpy(z.data(), d_iz.data(), np * sizeof(Real), cudaMemcpyDeviceToHost);
+  //   cudaMemcpy(keys_host.data(), d_keys.data(), np * sizeof(KeyType), cudaMemcpyDeviceToHost);
+  //   saveOctreeH5Gpu(box, octreeGpuData, d_tree, group_name + "_initial", rank, numRanks, x, y, z, keys_host);
+  // }
+
+  #pragma omp parallel for
+  for (auto i = 0; i < vals.size(); ++i) {
+    vals[i].x += px[i];
+    vals[i].y += py[i];
+    vals[i].z += pz[i];
+  }
+
+  cudaMemcpy(d_vals, vals.data(), vals.size() * sizeof(float4), cudaMemcpyHostToDevice);
+
+  nvtxRangePushA("Perturb");
+  sync_ms = timeGpu(f);
+  nvtxRangePop();
+
+  t.second = sync_ms;
+
+  call_count = 1;
+
+  if (rank == 0)
+    std::cout << "\tPerturbation update time: " << sync_ms << " us, call count: " << call_count
+              << std::endl;
+
+  cudaFree(d_vals);
+  
+  // if (save) {
+  //   std::vector<KeyType> keys_host(d_keys.size());
+  //   cudaMemcpy(x.data(), d_ix.data(), np * sizeof(Real), cudaMemcpyDeviceToHost);
+  //   cudaMemcpy(y.data(), d_iy.data(), np * sizeof(Real), cudaMemcpyDeviceToHost);
+  //   cudaMemcpy(z.data(), d_iz.data(), np * sizeof(Real), cudaMemcpyDeviceToHost);
+  //   cudaMemcpy(keys_host.data(), d_keys.data(), np * sizeof(KeyType), cudaMemcpyDeviceToHost);
+  //   saveOctreeH5Gpu(box, octreeGpuData, d_tree, group_name + "_perturbed", rank, numRanks, x, y, z, keys_host);
+  // }
+
+  return t;
+}
 
 // std::pair<double, double> runnerGpu(const std::vector<KeyType> &keys, const std::vector<Real> &ix,
 //                const std::vector<Real> &iy, const std::vector<Real> &iz,
