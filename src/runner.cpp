@@ -9,6 +9,7 @@
 #include <vector>
 #include <numeric>
 #include <span>
+#include <fstream>
 
 void runner(HighFive::File &file, std::string group_name, int rank,
             int numRanks, bool gpu, bool lets, int bucketSize, int bucketSizeFocus,
@@ -36,26 +37,60 @@ void runner(HighFive::File &file, std::string group_name, int rank,
   std::vector<Real> h(end - start, 0.1);
   std::vector<KeyType> keys(end - start);
 
-  for (int i = 0; i < 10; i++) {
-  if (!gpu && !lets) {
-    runnerCpu(keys, ix_local, iy_local, iz_local, h, px_local, py_local,
-              pz_local, rank, numRanks, bucketSize, bucketSizeFocus, theta,
-              group_name, save);
-  } else if (!gpu && lets) {
-    runnerCpuMulti(keys, ix_local, iy_local, iz_local, h, px_local, py_local,
-              pz_local, rank, numRanks, bucketSize, bucketSizeFocus, theta,
-              group_name, save);
-  } else if (gpu && !lets) {
-    runnerGpu(keys, ix_local, iy_local, iz_local, h, px_local, py_local,
-              pz_local, rank, numRanks, bucketSize, bucketSizeFocus, theta,
-              group_name, save);
-  } else if (gpu && lets) {
-    runnerGpuMulti(keys, ix_local, iy_local, iz_local, h, px_local, py_local,
-              pz_local, rank, numRanks, bucketSize, bucketSizeFocus, theta,
-              group_name, save);
-  } else {
-    throw std::runtime_error("Invalid combination of gpu and lets flags");
+  int trials = 10;
+
+  std::vector<double> t_no_pt (9);
+  std::vector<double> t_pt (9);
+
+  for (int i = 0; i < trials; i++) {
+    std::pair<double, double> t;
+    if (!gpu && !lets) {
+      t = runnerCpu(keys, ix_local, iy_local, iz_local, h, px_local, py_local,
+                pz_local, rank, numRanks, bucketSize, bucketSizeFocus, theta,
+                group_name, false);
+    } else if (!gpu && lets) {
+      t = runnerCpuMulti(keys, ix_local, iy_local, iz_local, h, px_local, py_local,
+                pz_local, rank, numRanks, bucketSize, bucketSizeFocus, theta,
+                group_name, false);
+    } else if (gpu && !lets) {
+      t = runnerGpu(keys, ix_local, iy_local, iz_local, h, px_local, py_local,
+                pz_local, rank, numRanks, bucketSize, bucketSizeFocus, theta,
+                group_name, false);
+    } else if (gpu && lets) {
+      t = runnerGpuMulti(keys, ix_local, iy_local, iz_local, h, px_local, py_local,
+                pz_local, rank, numRanks, bucketSize, bucketSizeFocus, theta,
+                group_name, false);
+    } else {
+      throw std::runtime_error("Invalid combination of gpu and lets flags");
+    }
+
+    if (i != 0) { // skip first trial for warmup
+      t_no_pt[i-1] = t.first;
+      t_pt[i-1] = t.second;
+    }
   }
+
+  double avg_no_pt = std::accumulate(t_no_pt.begin(), t_no_pt.end(), 0.0) / t_no_pt.size();
+  double avg_pt = std::accumulate(t_pt.begin(), t_pt.end(), 0.0) / t_pt.size();
+  double min_no_pt = *std::min_element(t_no_pt.begin(), t_no_pt.end());
+  double min_pt = *std::min_element(t_pt.begin(), t_pt.end());
+  double max_no_pt = *std::max_element(t_no_pt.begin(), t_no_pt.end());
+  double max_pt = *std::max_element(t_pt.begin(), t_pt.end());
+  double stddev_no_pt = std::sqrt(std::accumulate(t_no_pt.begin(), t_no_pt.end(), 0.0, 
+    [avg_no_pt](double acc, double x) { return acc + (x - avg_no_pt) * (x - avg_no_pt); }) / t_no_pt.size());
+  double stddev_pt = std::sqrt(std::accumulate(t_pt.begin(), t_pt.end(), 0.0, 
+    [avg_pt](double acc, double x) { return acc + (x - avg_pt) * (x - avg_pt); }) / t_pt.size());
+
+  if (rank == 0) {
+    std::cout << "No Perturbations: Average time: " << avg_no_pt << "us, Min: " << min_no_pt << "us, Max: " << max_no_pt << "us, StdDev: " << stddev_no_pt << "us" << std::endl;
+    std::cout << "With Perturbations: Average time: " << avg_pt << " us, Min: " << min_pt << "us, Max: " << max_pt << "us, StdDev: " << stddev_pt << "us" << std::endl;
+  }
+
+  if (save) {
+    std::ofstream out(group_name + "_timings.csv");
+    out << "trial,no_pt_us,pt_us\n";
+    for (size_t i = 0; i < t_no_pt.size(); i++)      out << (i+1) << "," << t_no_pt[i] << "," << t_pt[i] << "\n";
+    out.close();
   }
 }
 
@@ -101,7 +136,7 @@ void processCpu(cstone::Box<Real> &box,
   std::inclusive_scan(d_counts.begin(), d_counts.end(), d_layout.begin() + 1);
 }
 
-void runnerCpu(const std::vector<KeyType> &keys, const std::vector<Real> &ix,
+std::pair<double, double> runnerCpu(const std::vector<KeyType> &keys, const std::vector<Real> &ix,
                const std::vector<Real> &iy, const std::vector<Real> &iz,
                const std::vector<Real> &h, const std::vector<Real> &px,
                const std::vector<Real> &py, const std::vector<Real> &pz, int rank,
@@ -111,6 +146,8 @@ void runnerCpu(const std::vector<KeyType> &keys, const std::vector<Real> &ix,
 
   size_t np = keys.size();
   int call_count = 1;
+
+  std::pair<double, double> t;
 
   std::cout << "Running GPU Octree Build and Sync Benchmark with " << np
             << " particles, bucket size: " << bucketSize
@@ -138,6 +175,7 @@ void runnerCpu(const std::vector<KeyType> &keys, const std::vector<Real> &ix,
   };
 
   float sync_ms = timeCpu(f);
+  t.first = sync_ms;
 
   if (rank == 0)
     std::cout << "\tUpdate Octree Initial: " << sync_ms << "us, call count: " << call_count
@@ -155,19 +193,22 @@ void runnerCpu(const std::vector<KeyType> &keys, const std::vector<Real> &ix,
   }
 
   sync_ms = timeCpu(f);
+  t.second = sync_ms;
 
   call_count = 1;
 
   if (rank == 0)
     std::cout << "\tPerturbation update time: " << sync_ms << " us, call count: " << call_count
               << std::endl;
+
+  return t;
   
   // thrust::copy(thrust::host, d_keys.data(), d_keys.data() + d_keys.size(), keys.begin());
 
   // saveOctreeH5Gpu(domain, group_name + "_perturbed", x, y, z, keys);
 }
 
-void runnerCpuMulti(const std::vector<KeyType> &keys, const std::vector<Real> &ix,
+std::pair<double, double> runnerCpuMulti(const std::vector<KeyType> &keys, const std::vector<Real> &ix,
                const std::vector<Real> &iy, const std::vector<Real> &iz,
                const std::vector<Real> &h, const std::vector<Real> &px,
                const std::vector<Real> &py, const std::vector<Real> &pz, int rank,
@@ -175,6 +216,8 @@ void runnerCpuMulti(const std::vector<KeyType> &keys, const std::vector<Real> &i
                std::string group_name, bool save) {
   cstone::Domain<KeyType, Real, cstone::CpuTag> domain(
       rank, numRanks, bucketSize, bucketSizeFocus, theta);
+
+  std::pair<double, double> t;
 
   std::vector<KeyType> k(keys);
   std::vector<Real> x(ix), y(iy), z(iz);
@@ -186,6 +229,7 @@ void runnerCpuMulti(const std::vector<KeyType> &keys, const std::vector<Real> &i
   };
 
   float sync_ms = timeCpu(sync_f);
+  t.first = sync_ms;
 
   if (rank == 0) {
     std::cout << "\tDomain Sync Initial: " << sync_ms << "us" << std::endl;
@@ -203,6 +247,8 @@ void runnerCpuMulti(const std::vector<KeyType> &keys, const std::vector<Real> &i
 
   sync_ms = timeCpu(sync_f);
 
+  t.second = sync_ms;
+
   if (rank == 0) {
     std::cout << "\tDomain Sync with Perturbations: " << sync_ms << "us"
               << std::endl;
@@ -211,10 +257,10 @@ void runnerCpuMulti(const std::vector<KeyType> &keys, const std::vector<Real> &i
   if (save)
     saveDomainOctreeH5Cpu(domain, group_name + "_perturbed", rank, numRanks, x, y, z, k);
 
-  sync_ms = timeCpu(sync_f);
-
   if (rank == 0) {
     std::cout << "\tDomain Sync without Perturbations: " << sync_ms << "us"
               << std::endl;
   }
+
+  return t;
 }

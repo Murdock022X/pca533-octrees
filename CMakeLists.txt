@@ -8,6 +8,8 @@ set(VERBOSE_BUILD ON)
 set(CMAKE_CXX_STANDARD 20)
 set(DEFAULT_BUILD_TYPE "Release")
 
+set(CMAKE_CUDA_ARCHITECTURES 80 86 90)
+
 find_package(HDF5 REQUIRED COMPONENTS C CXX)
 
 add_subdirectory(src)
