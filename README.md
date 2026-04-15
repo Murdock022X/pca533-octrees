@@ -13,10 +13,16 @@ Each file contains:
 - `global_octree/*` datasets
 - `focus_octree/*` datasets
 
+### 0) Clone repository and dependencies
+
+```bash
+git clone --recursive https://github.com/Murdock022X/pca533-octrees.git
+```
+
 ### 1) Run octree build (GPU)
 
 ```bash
-cmake -S . -B build -DCMAKE_CXX_COMPILER=mpicxx -DCMAKE_CUDA_HOST_COMPILER=mpicxx -DCMAKE_CUDA_FLAGS="-I/usr/lib/x86_64-linux-gnu/openmpi/include" -DCMAKE_CXX_FLAGS="-I/usr/include/hdf5/serial" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DGPU_DIRECT=ON
+cmake -S . -B build -DCMAKE_CXX_COMPILER=mpicxx -DCMAKE_CUDA_HOST_COMPILER=mpicxx -DCMAKE_CUDA_FLAGS="-I/usr/lib/x86_64-linux-gnu/openmpi/include" -DCMAKE_CXX_FLAGS="-I/usr/include/hdf5/serial" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DGPU_DIRECT=ON -DCSTONE_WITH_HIP=OFF
 
 cmake --build ./build -j
 
