@@ -18,10 +18,22 @@ from dist_helpers import (
 
 BUILD_DIR = Path("build")
 PCA_BINARY = BUILD_DIR / "src" / "pca"
-NSYS_BINARY = Path("/opt/nvidia/hpc_sdk/Linux_x86_64/25.11/compilers/bin/nsys")
+NSYS_BINARY = Path(shutil.which("nsys") or "/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/profilers/Nsight_Systems/bin/nsys")
 PARTICLES_H5 = Path("particles.h5")
 OUTPUTS_DIR = Path("outputs")
 PLOT_SCRIPT = Path("scripts/plot_domain_octree.py")
+
+
+def _resolve_mpi_launcher():
+    """Return (launcher, np_flag) for the first MPI launcher found on PATH.
+    - mpirun / mpiexec (Open MPI, MPICH): -np
+    - srun (Cray PE / Slurm, e.g. Delta): -n
+    """
+    for launcher, flag in (("mpirun", "-np"), ("mpiexec", "-np"), ("srun", "-n")):
+        found = shutil.which(launcher)
+        if found:
+            return found, flag
+    return None, None
 
 
 # Derive hierarchical folder path from a distribution name
@@ -87,10 +99,11 @@ def _generate_one(f, cfg):
     print("done", flush=True)
 
 
-# Run pca under nsys (mpiexec -np matches GPU / MPI rank count)
-def _run_pca(name, nsys_output, num_gpus):
+# Run pca under nsys
+def _run_pca(name, nsys_output, num_gpus, launcher, np_flag):
+    bind_flag = ["--bind-to", "none"] if Path(launcher).name in ("mpirun", "mpiexec") else []
     cmd = [
-        "mpiexec", "-np", str(num_gpus),
+        launcher, np_flag, str(num_gpus), *bind_flag,
         str(NSYS_BINARY), "profile",
         "-o", str(nsys_output),
         "--trace=cuda,nvtx",
@@ -157,6 +170,10 @@ def run_batches(generators, n_particles, scale_factors, rotations=None,
     if num_gpus < 1:
         print("ERROR: num_gpus must be >= 1")
         sys.exit(1)
+    launcher, np_flag = _resolve_mpi_launcher()
+    if not launcher:
+        print("ERROR: no MPI launcher found (mpirun, mpiexec, or srun). Load an MPI module or run under Slurm.")
+        sys.exit(1)
 
     configs = _plan(generators, n_particles, scale_factors, rotations, out_of_bounds)
     total = len(configs)
@@ -164,7 +181,7 @@ def run_batches(generators, n_particles, scale_factors, rotations=None,
     print(f"Total configurations: {total}")
     print(f"Batch size: {batch_size}")
     print(f"Number of batches: {n_batches}")
-    print(f"MPI / GPU processes (mpiexec -np): {num_gpus}")
+    print(f"MPI launcher: {launcher} {np_flag} {num_gpus}")
 
     for batch_start in range(0, total, batch_size):
         batch = configs[batch_start : batch_start + batch_size]
@@ -186,7 +203,7 @@ def run_batches(generators, n_particles, scale_factors, rotations=None,
 
             print(f"\n--- {name} ---")
             nsys_output = Path(name)
-            rc = _run_pca(name, nsys_output, num_gpus)
+            rc = _run_pca(name, nsys_output, num_gpus, launcher, np_flag)
             if rc != 0:
                 print(f"  WARNING: pca exited with code {rc}")
             _generate_plots(name, folder)

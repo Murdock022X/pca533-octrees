@@ -12,13 +12,18 @@ import numpy as np
 # )
 
 run_batches(
+    # generators=[
+    #     uniform_initial, normal_initial, rectangular_initial,
+    #     pancake_initial, pancake_initial_tilted, spherical_initial,
+    #     filament_z_initial, filament_yz_initial, filament_xyz_initial,
+    # ],
+    # n_particles=[1e4, 1e5, 1e6, 1e7, 1e8],
+    # scale_factors=[0.001, 0.01, 0.1, .5],
     generators=[
-        uniform_initial, normal_initial, rectangular_initial,
-        pancake_initial, pancake_initial_tilted, spherical_initial,
-        filament_z_initial, filament_yz_initial, filament_xyz_initial,
+        uniform_initial
     ],
-    n_particles=[1e4, 1e5, 1e6, 1e7, 1e8],
-    scale_factors=[0.001, 0.01, 0.1, .5],
+    n_particles=[1e8],
+    scale_factors=[0.01],
     rotations=None,
     out_of_bounds='truncate',
     num_gpus=2
