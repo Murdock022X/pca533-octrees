@@ -100,15 +100,16 @@ def _generate_one(f, cfg):
 
 
 # Run pca under nsys
-def _run_pca(name, nsys_output, num_gpus, launcher, np_flag):
+def _run_pca(name, nsys_output, num_gpus, launcher, np_flag, lets):
     bind_flag = ["--bind-to", "none"] if Path(launcher).name in ("mpirun", "mpiexec") else []
+    lets_flag = ["--lets"] if lets else []
     cmd = [
         launcher, np_flag, str(num_gpus), *bind_flag,
         str(NSYS_BINARY), "profile",
         "-o", str(nsys_output),
         "--trace=cuda,nvtx",
         "--nvtx-capture", "Initial",
-        str(PCA_BINARY), "--gpu", "--save",
+        str(PCA_BINARY), "--gpu", "--save", *lets_flag,
         str(PARTICLES_H5), name,
     ]
     print(f"  $ {' '.join(cmd)}", flush=True)
@@ -163,7 +164,7 @@ def _generate_plots(name, output_folder):
 
 # Lazily generate distributions in batches, profile, plot, clean up
 def run_batches(generators, n_particles, scale_factors, rotations=None,
-                out_of_bounds="truncate", batch_size=5, num_gpus=1):
+                out_of_bounds="truncate", batch_size=5, num_gpus=1, lets=False):
     if not PCA_BINARY.exists():
         print(f"ERROR: {PCA_BINARY} not found. Build the project first.")
         sys.exit(1)
@@ -181,7 +182,7 @@ def run_batches(generators, n_particles, scale_factors, rotations=None,
     print(f"Total configurations: {total}")
     print(f"Batch size: {batch_size}")
     print(f"Number of batches: {n_batches}")
-    print(f"MPI launcher: {launcher} {np_flag} {num_gpus}")
+    print(f"MPI launcher: {launcher} {np_flag} {num_gpus}  (lets={'on' if lets else 'off'})")
 
     for batch_start in range(0, total, batch_size):
         batch = configs[batch_start : batch_start + batch_size]
@@ -203,7 +204,7 @@ def run_batches(generators, n_particles, scale_factors, rotations=None,
 
             print(f"\n--- {name} ---")
             nsys_output = Path(name)
-            rc = _run_pca(name, nsys_output, num_gpus, launcher, np_flag)
+            rc = _run_pca(name, nsys_output, num_gpus, launcher, np_flag, lets)
             if rc != 0:
                 print(f"  WARNING: pca exited with code {rc}")
             _generate_plots(name, folder)

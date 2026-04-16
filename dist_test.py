@@ -26,5 +26,6 @@ run_batches(
     scale_factors=[0.01],
     rotations=None,
     out_of_bounds='truncate',
-    num_gpus=2
+    num_gpus=2,
+    lets=True
 )
